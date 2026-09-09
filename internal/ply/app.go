@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"ply/internal/prompts"
 	"reflect"
 	"sort"
 	"strings"
@@ -33,6 +34,7 @@ type App struct {
 	Steers     []string
 	ApprovalID int
 	Streamed   bool
+	Modes      []Item
 	Status     *statusLine
 }
 
@@ -297,10 +299,11 @@ func run(ctx context.Context, o Options) error {
 	for _, mode := range []struct {
 		active     bool
 		name, text string
-	}{{o.Plan, "plan", "For this turn: produce or revise the plan using the plan tool. Do not execute commands other than read-only inspection needed to plan."}, {o.Subagent, "subagent", "For this turn: work as a subagent, report a concise final result, and wait for your background tasks."}, {o.NoTools, "no_tools", "For this turn: answer without tools in a single response."}} {
+	}{{o.Plan, "plan", prompts.Plan}, {o.Subagent, "subagent", prompts.Subagent}, {o.NoTools, "no_tools", prompts.NoTools}} {
 		if mode.active {
 			i := message("developer", mode.text)
 			i["ply.mode"] = mode.name
+			a.Modes = append(a.Modes, i)
 			if e = t.Append(i); e != nil {
 				return e
 			}
@@ -332,7 +335,7 @@ func run(ctx context.Context, o Options) error {
 				return fail(e)
 			}
 		}
-		resp, e := a.call(Replay(t.Items), !o.NoTools, true)
+		resp, e := a.call(a.modelInput(), !o.NoTools, true)
 		if errors.Is(e, errSteered) {
 			continue
 		}
@@ -441,7 +444,7 @@ func run(ctx context.Context, o Options) error {
 		}
 	}
 	a.Status.Clear()
-	if o.Plan && !o.Subagent {
+	if o.Plan && !o.Subagent && !o.Quiet {
 		if p := latest(t.Items, "ply.plan"); p != nil {
 			fmt.Println(str(p["text"]))
 		}
@@ -479,8 +482,8 @@ func (a *App) compact() error {
 		return fmt.Errorf("cannot compact with unresolved tool calls")
 	}
 	before := num(latest(a.T.Items, "ply.usage")["input_tokens"])
-	input := Replay(a.T.Items)
-	input = append(input, message("user", "Summarize this context for continuation. Preserve the outstanding user request, in-progress work, task IDs, important paths, decisions, and unresolved problems. The plan is preserved separately verbatim. Return only the summary."))
+	input := a.modelInput()
+	input = append(input, message("developer", prompts.Compact))
 	r, e := a.call(input, false, false)
 	if e != nil {
 		return e
@@ -586,4 +589,12 @@ func inputMessage(o Options, items []Item, action bool) (string, bool, error) {
 		return "", false, fmt.Errorf("empty message; use --allow-empty")
 	}
 	return s, turn, nil
+}
+
+func (a *App) modelInput() []Item {
+	input := Replay(a.T.Items)
+	for _, mode := range a.Modes {
+		input = append(input, clean(mode))
+	}
+	return input
 }

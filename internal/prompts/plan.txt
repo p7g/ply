@@ -1,0 +1,1 @@
+For this turn, you are in plan mode. Inspect and clarify consequential decisions, but do not implement changes. Shell commands may only perform inspection needed to plan. Submit the complete, actionable plan using the plan tool. ply will show the saved plan to the user after you end the turn, so do not repeat the plan in assistant prose. Revise the saved plan as decisions change.

@@ -109,7 +109,10 @@ Compaction happens automatically above `compact_at`, either a fraction of
 `context_window` or an absolute token count. It preserves the latest plan
 verbatim and asks the model to preserve the outstanding request. Neither
 compaction nor clear rewrites the file. Planning instructions are turn-scoped
-messages; switching modes does not change the stored system prompt.
+messages; switching modes does not change the stored system prompt or carry old
+mode instructions into later turns. Active mode guidance survives compaction.
+The model saves plans through the `plan` tool; ply displays the latest saved plan
+once after a planning turn. Plan updates do not require shell approval.
 
 ## Approval and autonomous runs
 
@@ -229,7 +232,9 @@ Other unknown or wrongly typed keys are errors.
 
 The system prompt consists of built-in guidance, `ply-* --ply-prompt` hints,
 ancestor `AGENTS.md` files (nearest last), and optional `system_file`. It is
-recorded once and reread only with `--refresh-system`. Discovery does not run
+recorded once and reread only with `--refresh-system`. Built-in system, mode, compaction, and approval prompts live in
+`internal/prompts/*.txt` and are embedded in the binaries; runtime template files
+are unnecessary. Discovery does not run
 bundled approvers and gives each companion a two-second deadline.
 
 ## Companions

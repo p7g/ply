@@ -52,6 +52,9 @@ func (r Renderer) Item(i Item) {
 			}
 		}
 	case "function_call_output":
+		if str(i["ply.tool"]) == "plan" && str(i["output"]) == "Plan updated." {
+			return
+		}
 		s = indent(str(i["output"]), "  ")
 		dim = true
 	case "ply.plan":

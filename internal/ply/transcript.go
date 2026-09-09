@@ -201,6 +201,9 @@ func Replay(items []Item) []Item {
 	}
 	for _, i := range items[c+1:] {
 		typ := str(i["type"])
+		if i["ply.mode"] != nil {
+			continue
+		}
 		switch typ {
 		case "ply.task_done":
 			out = append(out, message("user", fmt.Sprintf("[task %v finished: exit %v in %vs]\n%s", i["task"], i["exit_code"], i["duration_s"], str(i["output_tail"]))))

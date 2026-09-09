@@ -401,7 +401,7 @@ func (a *App) execute(call Item) error {
 	default:
 		output = "ERROR: unknown tool " + str(call["name"])
 	}
-	if e := a.T.Append(Item{"type": "function_call_output", "call_id": call["call_id"], "output": output}); e != nil {
+	if e := a.T.Append(Item{"type": "function_call_output", "call_id": call["call_id"], "output": output, "ply.tool": call["name"]}); e != nil {
 		return e
 	}
 	if a.Context.Err() != nil || len(a.Steers) > 0 {
