@@ -177,7 +177,7 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 		})
 		ch <- result{r, s, e}
 	}()
-	a.Status.Show("thinking…")
+	a.Status.Show("thinking...")
 	defer a.Status.Clear()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -207,7 +207,7 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 				return Response{}, e
 			}
 			if !prose.Started {
-				a.Status.Show("thinking…")
+				a.Status.Show("thinking...")
 			}
 		case i, open := <-commands:
 			if !open {

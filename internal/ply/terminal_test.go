@@ -76,7 +76,7 @@ func TestTerminalApprovalAndStreaming(t *testing.T) {
 			if strings.Contains(out, "\n\n\n") {
 				t.Fatalf("extra blank lines: %q", out)
 			}
-			if !strings.Contains(out, "thinking… 1s") || !strings.Contains(out, "\r\x1b[2K$") {
+			if !strings.Contains(out, "thinking... 1s") || !strings.Contains(out, "\r\x1b[2K$") {
 				t.Fatalf("missing/uncleared thinking state: %q", out)
 			}
 			if !strings.Contains(out, "DONE\n\n") {

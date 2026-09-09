@@ -47,7 +47,7 @@ func truncate(s string, n int, path string, tail bool) string {
 		return strings.Join(lines[len(lines)-n:], "\n")
 	}
 	head := (n + 1) / 2
-	return strings.Join(lines[:head], "\n") + fmt.Sprintf("\n[… %d lines omitted; full output: %s]\n", len(lines)-n, path) + strings.Join(lines[len(lines)-(n-head):], "\n")
+	return strings.Join(lines[:head], "\n") + fmt.Sprintf("\n[... %d lines omitted; full output: %s]\n", len(lines)-n, path) + strings.Join(lines[len(lines)-(n-head):], "\n")
 }
 func runProcess(ctx context.Context, shell, command, cwd string, out io.Writer, stdin io.Reader, timeout int, bridge ...*os.File) (int, float64, bool, error) {
 	if e := ctx.Err(); e != nil {

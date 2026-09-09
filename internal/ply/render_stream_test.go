@@ -29,10 +29,10 @@ func TestStreamSpacingMatchesHistory(t *testing.T) {
 func TestStatusErasedBeforeOutputAndDisabledOffTTY(t *testing.T) {
 	var errout, out bytes.Buffer
 	status := &statusLine{W: &errout, Enabled: true}
-	status.Show("thinking…")
+	status.Show("thinking...")
 	status.since = time.Now().Add(-2 * time.Second)
 	status.Tick()
-	if !strings.Contains(errout.String(), "thinking… 2s") {
+	if !strings.Contains(errout.String(), "thinking... 2s") {
 		t.Fatal(errout.String())
 	}
 	prose := proseStream{W: &out, BeforeWrite: status.Clear}
@@ -50,7 +50,7 @@ func TestStatusErasedBeforeOutputAndDisabledOffTTY(t *testing.T) {
 		t.Fatal("status redrew over prose")
 	}
 	disabled := &statusLine{W: &errout}
-	disabled.Show("thinking…")
+	disabled.Show("thinking...")
 	disabled.Tick()
 	disabled.Clear()
 	if errout.String() != before {

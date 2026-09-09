@@ -81,7 +81,7 @@ Without message flags, nonempty piped stdin becomes a message; an empty pipe
 renders the transcript. Follow and transcript actions do not consume stdin.
 `-q` prints only assistant prose. `$PAGER` defaults to `less -FRX`; live output
 is never paged. `NO_COLOR` disables color, including `--output-color=always`.
-While awaiting model output, tty stderr shows `thinking…` with elapsed seconds.
+While awaiting model output, tty stderr shows `thinking...` with elapsed seconds.
 It clears before prose, commands, or approval prompts; redirected stderr is silent.
 Whitespace-only assistant messages are hidden, and outer blank lines are normalized
 without changing the stored provider items.
