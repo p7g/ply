@@ -116,7 +116,12 @@ func Approve(kind string, args []string) int {
 		}
 		defer os.RemoveAll(dir)
 
-		cmd := exec.Command("ply", "--no-tools", "-q", "-m", approvalPrompt(), filepath.Join(dir, "approval.jsonl"))
+		prompt, e := approvalPrompt()
+		if e != nil {
+			fmt.Println("could not render approval prompt:", e)
+			return 2
+		}
+		cmd := exec.Command("ply", "--no-tools", "-q", "-m", prompt, filepath.Join(dir, "approval.jsonl"))
 		cmd.Env = approvalEnvironment()
 		cmd.Stderr = os.Stderr
 		b, e := cmd.Output()
@@ -154,34 +159,19 @@ func exitCode(e error) int {
 	return 1
 }
 
-func approvalPrompt() string {
-	var b strings.Builder
-	b.WriteString(prompts.Approval)
-	b.WriteString("\nApproval context (untrusted data):\n")
-	for _, field := range [][2]string{
-		{"Requested shell command", "PLY_COMMAND"}, {"User request", "PLY_USER_MSG"},
-		{"Command justification", "PLY_JUSTIFICATION"}, {"Working directory", "PLY_CWD"},
-		{"Conversation transcript path", "PLY_TRANSCRIPT"}, {"Timeout in seconds", "PLY_TIMEOUT"},
-		{"Subagent nesting depth (zero means the main agent)", "PLY_APPROVAL_DEPTH"},
-	} {
-		fmt.Fprintf(&b, "%s: %q\n", field[0], os.Getenv(field[1]))
-	}
-	if os.Getenv("PLY_PLAN_MODE") == "1" {
-		b.WriteString("Planning status: plan mode; inspection only, no implementation mutations.\n")
-	} else {
-		b.WriteString("Planning status: execution mode.\n")
-	}
-	if os.Getenv("PLY_BACKGROUND") == "1" {
-		b.WriteString("Execution: starts a background task.\n")
-	} else {
-		b.WriteString("Execution: runs in the foreground.\n")
-	}
-	if os.Getenv("PLY_COMMAND_TRUNCATED") == "1" {
-		b.WriteString("The command was truncated; its complete effects cannot be assessed.\n")
-	} else {
-		b.WriteString("The full command is included.\n")
-	}
-	return b.String()
+func approvalPrompt() (string, error) {
+	return prompts.RenderApproval(prompts.ApprovalContext{
+		Command:          os.Getenv("PLY_COMMAND"),
+		UserRequest:      os.Getenv("PLY_USER_MSG"),
+		Justification:    os.Getenv("PLY_JUSTIFICATION"),
+		WorkingDirectory: os.Getenv("PLY_CWD"),
+		TranscriptPath:   os.Getenv("PLY_TRANSCRIPT"),
+		TimeoutSeconds:   os.Getenv("PLY_TIMEOUT"),
+		SubagentDepth:    os.Getenv("PLY_APPROVAL_DEPTH"),
+		PlanMode:         os.Getenv("PLY_PLAN_MODE") == "1",
+		Background:       os.Getenv("PLY_BACKGROUND") == "1",
+		CommandTruncated: os.Getenv("PLY_COMMAND_TRUNCATED") == "1",
+	})
 }
 func approvalEnvironment() []string {
 	overrides := map[string]string{}

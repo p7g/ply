@@ -282,7 +282,9 @@ The system prompt consists of built-in guidance, `ply-* --ply-prompt` hints,
 ancestor `AGENTS.md` files (nearest last), and optional `system_file`. It is
 recorded once and reread only with `--refresh-system`. Built-in system, mode, compaction, and approval prompts live in
 `internal/prompts/*.txt` and are embedded in the binaries; runtime template files
-are unnecessary. Discovery does not run
+are unnecessary. The approval prompt uses Go’s `text/template` with a typed
+context; its labels, conditional prose, and quoted values live in the template.
+Discovery does not run
 bundled approvers and gives each companion a two-second deadline.
 
 ## Companions

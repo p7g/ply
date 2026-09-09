@@ -224,7 +224,10 @@ func TestApprovalContextAndModelEnvironment(t *testing.T) {
 	t.Setenv("PLY_APPROVE_MODEL", "reviewer")
 	t.Setenv("PLY_CONTEXT_WINDOW", "100")
 	t.Setenv("PLY_APPROVE_CONTEXT_WINDOW", "200")
-	prompt := approvalPrompt()
+	prompt, err := approvalPrompt()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{"Requested shell command:", "plan mode; inspection only", "command was truncated", "untrusted data"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatal(prompt)
