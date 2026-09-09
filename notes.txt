@@ -1,0 +1,24 @@
+- command and approval interleaved
+- need to explain that commands can be denied
+- does output.max_lines affect the LLM too? Should decouple rendering
+- don't show "thinking..." when commands (or the approver) are running, or compacting
+
+- any way auto mode can communicate why it was blocked? read stdout of approval command and include that as denial reason
+- replace hard-coded OPENAI_API_KEY with config
+- remove PLY_COMMAND_RENDERED unless it's needed for some reason?
+- replace [approval depth 0] thing when approving
+- support skills in .agents
+- include guidance on how to add skills, or add command to ply-skill
+- different model for auto approval
+- show context usage
+- improve auto-approval prompt (find / ...)
+- show thinking doesn't work
+- tell approver about plan mode
+- parse markdown?
+- remember conversation file somehow?
+- better plan mode guidance
+  - instruct to use the plan tool, don't respond with the plan
+  - tell it that the user will be shown the plan after they end the turn
+- duplicate "plan updated"
+- move prompts to external files (templates), embed text in binary
+- what is "context canceled" when you ctrl+c
