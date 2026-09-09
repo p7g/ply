@@ -9,7 +9,56 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestResponsePersistenceAndApprovalOrder(t *testing.T) {
+	dir := t.TempDir()
+	policy := filepath.Join(dir, "approve")
+	// All calls and response usage must already be durable when approval starts.
+	body := "#!/bin/sh\n[ \"$(grep -c '\"type\":\"function_call\"' \"$PLY_TRANSCRIPT\")\" = 3 ] || exit 1\ngrep -q '\"type\":\"ply.usage\"' \"$PLY_TRANSCRIPT\" || exit 1\necho APPROVAL >&2\n"
+	if e := os.WriteFile(policy, []byte(body), 0700); e != nil {
+		t.Fatal(e)
+	}
+	record := recorded(t, dir, []Item{
+		Item{"type": "reasoning", "id": "reason", "encrypted_content": "opaque", "summary": []any{Item{"type": "summary_text", "text": "Inspect first."}}},
+		callItem("bash", "first", BashArgs{Command: "printf FIRST_RESULT", Justification: "inspect"}),
+		callItem("plan", "plan", Item{"text": "The saved plan"}),
+		callItem("bash", "second", BashArgs{Command: "printf SECOND_RESULT", Justification: "inspect"}),
+	}, []Item{message("assistant", "Finished.")})
+	out, e := cli(t, dir, "--plan", "--show-thinking", "--approve-command", policy, "--provider", "replay:"+record, "-m", "plan", "t.jsonl")
+	if e != nil {
+		t.Fatal(e, out)
+	}
+	cursor := 0
+	for _, want := range []string{"$ printf FIRST_RESULT", "APPROVAL", "  FIRST_RESULT", "[plan updated]", "$ printf SECOND_RESULT", "APPROVAL", "  SECOND_RESULT", "Finished.", "The saved plan"} {
+		n := strings.Index(out[cursor:], want)
+		if n < 0 {
+			t.Fatalf("missing ordered %q in %s", want, out)
+		}
+		cursor += n + len(want)
+	}
+	if strings.Count(out, "[plan updated]") != 1 || strings.Contains(out, "Plan updated.") {
+		t.Fatal(out)
+	}
+	items := mustItems(t, filepath.Join(dir, "t.jsonl"))
+	approvals, usage := 0, 0
+	for _, i := range items {
+		if str(i["type"]) == "ply.approval" {
+			approvals++
+			ref := num(i["for"])
+			if str(items[ref]["type"]) != "function_call" {
+				t.Fatal(i)
+			}
+		}
+		if str(i["type"]) == "ply.usage" {
+			usage++
+		}
+	}
+	if approvals != 2 || usage != 2 || len(pending(items)) != 0 || latest(items, "reasoning") == nil {
+		t.Fatal(items)
+	}
+}
 
 func TestCredentialConfigAndSnapshot(t *testing.T) {
 	dir := t.TempDir()
@@ -93,6 +142,15 @@ func TestApprovalEffectiveSettingsAndPlanPropagation(t *testing.T) {
 	}
 }
 
+func TestQuietUsageAndStatus(t *testing.T) {
+	dir := t.TempDir()
+	record := recorded(t, dir, []Item{message("assistant", "Only prose.")})
+	out, e := cli(t, dir, "-q", "--provider", "replay:"+record, "-m", "hello", "t.jsonl")
+	if e != nil || out != "Only prose.\n\n" {
+		t.Fatal(e, out)
+	}
+}
+
 func TestNestedPlanApproval(t *testing.T) {
 	dir := t.TempDir()
 	c, e := resolve(dir, Options{Overrides: map[string]string{"approve.command": "test \"$PLY_PLAN_MODE\" = 1"}})
@@ -127,5 +185,41 @@ func TestApprovalModelSubprocessEnvironment(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join(dir, "t.jsonl"))
 	if strings.Contains(string(raw), "env-secret") {
 		t.Fatal("secret persisted")
+	}
+}
+
+func TestApprovalInterruptDoesNotExecute(t *testing.T) {
+	dir := t.TempDir()
+	record := recorded(t, dir, []Item{callItem("bash", "blocked", BashArgs{Command: "touch executed", Justification: "test"})})
+	cmd := exec.Command(filepath.Join(binaries, "ply"), "--approve-command", "touch approving; exec sleep 20", "--provider", "replay:"+record, "-m", "run", "t.jsonl")
+	cmd.Dir = dir
+	cmd.Env = integrationEnv(dir)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if e := cmd.Start(); e != nil {
+		t.Fatal(e)
+	}
+	defer cmd.Process.Kill()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, e := os.Stat(filepath.Join(dir, "approving")); e == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("approval did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cmd.Process.Signal(os.Interrupt)
+	e := cmd.Wait()
+	if ee, ok := e.(*exec.ExitError); !ok || ee.ExitCode() != 130 {
+		t.Fatal(e, out.String())
+	}
+	if strings.Contains(out.String(), "context canceled") || strings.Count(out.String(), "[interrupted]") != 1 {
+		t.Fatal(out.String())
+	}
+	if _, e := os.Stat(filepath.Join(dir, "executed")); !os.IsNotExist(e) {
+		t.Fatal("denied command executed")
 	}
 }

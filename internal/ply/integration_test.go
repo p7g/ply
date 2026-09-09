@@ -236,6 +236,9 @@ func TestCLIModelInterruptRecordsOnlyVisibleText(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	cmd.Process.Signal(os.Interrupt)
 	e := cmd.Wait()
+	if strings.Contains(out.String(), "context canceled") {
+		t.Fatal(out.String())
+	}
 	if ee, ok := e.(*exec.ExitError); !ok || ee.ExitCode() != 130 {
 		t.Fatal(out.String(), e)
 	}
@@ -435,6 +438,9 @@ func TestCLIForegroundInterrupt(t *testing.T) {
 	}
 	cmd.Process.Signal(os.Interrupt)
 	e := cmd.Wait()
+	if strings.Contains(out.String(), "context canceled") {
+		t.Fatal(out.String())
+	}
 	if ee, ok := e.(*exec.ExitError); !ok || ee.ExitCode() != 130 {
 		t.Fatal(out.String(), e)
 	}

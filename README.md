@@ -85,7 +85,11 @@ renders the transcript. Follow and transcript actions do not consume stdin.
 `-q` prints only assistant prose. `$PAGER` defaults to `less -FRX`; live output
 is never paged. `NO_COLOR` disables color, including `--output-color=always`.
 While awaiting model output, tty stderr shows `thinking...` with elapsed seconds.
-It clears before prose, commands, or approval prompts; redirected stderr is silent.
+Command execution uses `running command...`; compaction uses `compacting...`.
+Activity clears before prose or approval prompts and is suppressed in quiet,
+redirected-stderr, and subagent output. A command is displayed immediately before
+its approval and result, even when a response contains several commands.
+
 Whitespace-only assistant messages are hidden, and outer blank lines are normalized
 without changing the stored provider items.
 Exit codes are 0 for completion/detachment, 1 for errors, 2 for invalid CLI
@@ -220,6 +224,8 @@ There is no reattachment or `--steer TASK` command in v1.
 Ctrl+C during streaming records the received assistant text with `ply.partial`
 and an interrupt marker. During a foreground command it records interrupted
 output. While waiting it detaches and exits successfully, leaving tasks running.
+During approval, Ctrl+C stops approval without executing the command. Expected
+interruption exits with status 130 without printing Go’s `context canceled` error.
 
 ```sh
 # Steering: Ctrl+C, then:

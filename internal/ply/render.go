@@ -74,6 +74,9 @@ func (r Renderer) Item(i Item) {
 		}
 		dim = true
 	case "ply.interrupt":
+		if i["ply.rendered_in_output"] == true {
+			return
+		}
 		s = "[interrupted]"
 		dim = true
 	case "ply.error":

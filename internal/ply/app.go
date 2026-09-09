@@ -21,21 +21,22 @@ import (
 const Version = "0.1.0"
 
 type App struct {
-	T          *Transcript
-	Options    Options
-	Config     Config
-	Path, Cwd  string
-	Context    context.Context
-	Provider   *Provider
-	Renderer   Renderer
-	Proxy      chan proxyRequest
-	Protocol   *Protocol
-	Children   []io.WriteCloser
-	Steers     []string
-	ApprovalID int
-	Streamed   bool
-	Modes      []Item
-	Status     *statusLine
+	T               *Transcript
+	Options         Options
+	Config          Config
+	Path, Cwd       string
+	Context         context.Context
+	Provider        *Provider
+	Renderer        Renderer
+	Proxy           chan proxyRequest
+	Protocol        *Protocol
+	Children        []io.WriteCloser
+	Steers          []string
+	ApprovalID      int
+	Streamed        bool
+	CommandRendered bool
+	Modes           []Item
+	Status          *statusLine
 }
 
 func Main(args []string) int {
@@ -59,13 +60,16 @@ func Main(args []string) int {
 	defer cancel()
 	e = run(ctx, o)
 	if e != nil {
+		if errors.Is(e, context.Canceled) {
+			if o.Subagent {
+				event(Item{"event": "error", "message": "interrupted"})
+			}
+			return 130
+		}
 		if o.Subagent {
 			event(Item{"event": "error", "message": e.Error()})
 		}
 		fmt.Fprintln(os.Stderr, "ply:", e)
-		if errors.Is(e, context.Canceled) {
-			return 130
-		}
 		return 1
 	}
 	return 0
@@ -97,7 +101,7 @@ func run(ctx context.Context, o Options) error {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		color = false
 	}
-	status := &statusLine{W: os.Stderr, Enabled: tty(os.Stderr) && !o.Subagent}
+	status := &statusLine{W: os.Stderr, Enabled: tty(os.Stderr) && !o.Subagent && !o.Quiet}
 	defer status.Clear()
 	r := Renderer{BeforeWrite: status.Clear, W: os.Stdout, Quiet: o.Quiet, Thinking: c.B("output.show_thinking"), Color: color}
 	action := o.Compact || o.Clear || o.ShowPlan || o.Tasks || o.HasKill || o.ShowConfig
@@ -356,6 +360,8 @@ func run(ctx context.Context, o Options) error {
 				} else {
 					e = t.Append(i)
 				}
+			} else if str(i["type"]) == "function_call" {
+				e = a.appendSilent(i)
 			} else {
 				e = t.Append(i)
 			}
@@ -374,6 +380,12 @@ func run(ctx context.Context, o Options) error {
 		}
 		if len(calls) > 0 {
 			for _, call := range calls {
+				a.CommandRendered = false
+				if !o.Subagent {
+					a.Renderer.Item(call)
+					var args BashArgs
+					a.CommandRendered = !o.Quiet && tty(os.Stdout) && str(call["name"]) == "bash" && decodeArgs(call, &args) == nil
+				}
 				if e = a.execute(call); e != nil {
 					if errors.Is(e, errSteered) {
 						for _, p := range pending(t.Items) {
@@ -426,6 +438,7 @@ func run(ctx context.Context, o Options) error {
 				if e = a.proxy(p); e != nil {
 					return fail(e)
 				}
+				a.Status.Show(fmt.Sprintf("[waiting: %d tasks]", running))
 			case cmd, open := <-commands:
 				if !open {
 					commands = nil
@@ -453,6 +466,7 @@ func run(ctx context.Context, o Options) error {
 			fmt.Println(str(p["text"]))
 		}
 	}
+
 	if o.Subagent {
 		event(Item{"event": "result", "text": result})
 	}

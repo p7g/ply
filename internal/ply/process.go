@@ -381,14 +381,16 @@ func (a *App) execute(call Item) error {
 		if e != nil {
 			return e
 		}
+		a.Status.Show("running command...")
 		code, duration, timed, runErr := a.foreground(args, f)
+		a.Status.Clear()
 		f.Close()
 		b, e := os.ReadFile(path)
 		if e != nil {
 			return e
 		}
 		output = truncate(string(b), a.Config.N("output.max_lines"), path, false)
-		if runErr != nil {
+		if runErr != nil && a.Context.Err() == nil {
 			output += "\nERROR: " + runErr.Error()
 		}
 		output += fmt.Sprintf("\n[exit %d, %.2fs]", code, duration)
@@ -405,7 +407,9 @@ func (a *App) execute(call Item) error {
 		return e
 	}
 	if a.Context.Err() != nil || len(a.Steers) > 0 {
-		a.T.Append(Item{"type": "ply.interrupt", "during": "command", "for": call["seq"]})
+		if e := a.T.Append(Item{"type": "ply.interrupt", "during": "command", "for": call["seq"], "ply.rendered_in_output": true}); e != nil {
+			return e
+		}
 		if a.Context.Err() != nil {
 			return a.Context.Err()
 		}
@@ -443,6 +447,7 @@ func (a *App) foreground(args BashArgs, out io.Writer) (int, float64, bool, erro
 				r := <-done
 				return r.code, r.duration, r.timed, e
 			}
+			a.Status.Show("running command...")
 		case i, open := <-commands:
 			if !open {
 				commands = nil

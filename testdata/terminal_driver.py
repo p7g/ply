@@ -14,6 +14,7 @@ if pid == 0:
 output = bytearray()
 answered = False
 status = None
+eof = False
 try:
     deadline = time.monotonic() + float(os.environ.get("PLY_TEST_TIMEOUT", "15"))
     while time.monotonic() < deadline:
@@ -21,8 +22,10 @@ try:
             try:
                 data = os.read(fd, 65536)
             except OSError:
+                eof = True
                 break
             if not data:
+                eof = True
                 break
             output.extend(data)
             if b"Allow? [y/N]" in output and not answered:
@@ -41,6 +44,14 @@ try:
                     break
                 output.extend(data)
             break
+    if status is None and eof:
+        # PTY EOF can precede waitpid reporting exit by a few milliseconds.
+        while time.monotonic() < deadline:
+            child, result = os.waitpid(pid, os.WNOHANG)
+            if child:
+                status = result
+                break
+            time.sleep(0.01)
     if status is None:
         child, result = os.waitpid(pid, os.WNOHANG)
         if child:

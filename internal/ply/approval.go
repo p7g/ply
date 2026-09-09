@@ -51,6 +51,7 @@ func newProtocol() *Protocol {
 }
 func event(i Item) { b, _ := json.Marshal(i); fmt.Println(string(b)) }
 func (a *App) approve(call Item, args BashArgs, depth int) (bool, string, error) {
+	a.Status.Clear()
 	var ok bool
 	var reason string
 	approver := a.Config.S("approve.command")
@@ -122,11 +123,16 @@ func (a *App) approve(call Item, args BashArgs, depth int) (bool, string, error)
 		// Interactive approvers must remain in the terminal's foreground group.
 		// A separate group receives SIGTTIN when it reads /dev/tty.
 		cmd.WaitDelay = time.Second
-		env["PLY_COMMAND_RENDERED"] = strconv.Itoa(btoi(depth == 0 && !a.Options.Quiet && tty(os.Stdout)))
+		env["PLY_COMMAND_RENDERED"] = strconv.Itoa(btoi(depth == 0 && a.CommandRendered))
 		cmd.Env = replaceEnv(os.Environ(), env)
 		cmd.Stderr = os.Stderr
 		b, e := cmd.Output()
-
+		if a.Context.Err() != nil {
+			if e := a.T.Append(Item{"type": "ply.interrupt", "during": "approval", "for": call["seq"]}); e != nil {
+				return false, "", e
+			}
+			return false, "interrupted", a.Context.Err()
+		}
 		ok = e == nil
 		reason = strings.TrimSpace(string(b))
 		if e != nil && reason == "" {
@@ -198,7 +204,11 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 		})
 		ch <- result{r, s, e}
 	}()
-	a.Status.Show("thinking...")
+	label := "thinking..."
+	if !stream {
+		label = "compacting..."
+	}
+	a.Status.Show(label)
 	defer a.Status.Clear()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -221,13 +231,14 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 		case s := <-deltas:
 			printDelta(s)
 		case p := <-a.Proxy:
+			a.Status.Clear()
 			if e := a.proxy(p); e != nil {
 				cancel()
 				<-ch
 				return Response{}, e
 			}
 			if !prose.Started {
-				a.Status.Show("thinking...")
+				a.Status.Show(label)
 			}
 		case i, open := <-commands:
 			if !open {
@@ -242,6 +253,7 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 			for len(deltas) > 0 {
 				printDelta(<-deltas)
 			}
+			a.Status.Clear()
 			prose.End()
 			a.Streamed = prose.Started
 			if res.e != nil && ctx.Err() != nil {

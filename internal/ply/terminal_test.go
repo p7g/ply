@@ -101,3 +101,45 @@ func TestTerminalApprovalAndStreaming(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminalCompactionStatus(t *testing.T) {
+	python, e := exec.LookPath("python3")
+	if e != nil {
+		t.Skip("requires Python PTY support")
+	}
+	driver, e := filepath.Abs("../../testdata/terminal_driver.py")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, quiet := range []bool{false, true} {
+		t.Run(fmt.Sprint(quiet), func(t *testing.T) {
+			dir := t.TempDir()
+			fixture(t, filepath.Join(dir, "t.jsonl"), message("user", "summarize this"))
+			record := recorded(t, dir, []Item{message("assistant", "Compact summary")})
+			args := []string{driver, filepath.Join(binaries, "ply"), "--compact", "--provider", "replay:" + record, "t.jsonl"}
+			if quiet {
+				args = append(args, "-q")
+			}
+			cmd := exec.Command(python, args...)
+			cmd.Dir = dir
+			cmd.Env = integrationEnv(dir)
+			b, e := cmd.CombinedOutput()
+			if e != nil {
+				t.Fatal(e, string(b))
+			}
+			var result struct {
+				Output string
+				Exit   *int
+			}
+			if e = json.Unmarshal(b, &result); e != nil {
+				t.Fatal(e, string(b))
+			}
+			if result.Exit == nil || *result.Exit != 0 {
+				t.Fatal(string(b))
+			}
+			if strings.Contains(result.Output, "thinking...") || strings.Contains(result.Output, "compacting...") == quiet {
+				t.Fatal(result.Output)
+			}
+		})
+	}
+}
