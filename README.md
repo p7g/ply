@@ -234,14 +234,34 @@ bundled approvers and gives each companion a two-second deadline.
 
 ## Companions
 
-`ply-skill` discovers `.ply/skills/*/SKILL.md` up the directory tree and
-`~/.config/ply/skills/*/SKILL.md`. A nearer skill with the same directory name
-wins. A `description:` frontmatter line supplies its prompt hint.
+`ply-skill` discovers `.ply/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md`
+up the directory tree, plus user skills in `~/.config/ply/skills` (respecting
+`XDG_CONFIG_HOME`) and `~/.agents/skills`. A nearer directory wins; within the
+same directory, `.ply` wins over `.agents`. Project skills override user skills.
+At user scope, the ply config directory wins over `~/.agents/skills`.
+A `description:` frontmatter line supplies the prompt hint.
 
 ```sh
 ply-skill list
 ply-skill show NAME
 ```
+
+To add a project skill, create or copy a directory containing `SKILL.md` into
+`.ply/skills/NAME/` (or `.agents/skills/NAME/` to share it with other agents).
+Use the user locations above for personal skills. A minimal skill is:
+
+```markdown
+---
+name: review
+description: Review a change and report actionable findings.
+---
+Read the change, inspect its callers, and verify important assumptions.
+```
+
+Run `ply-skill list` and `ply-skill show review` to check discovery. Existing
+conversations cache their system prompt, so use `--refresh-system` after adding
+skills or changing their descriptions. The companion reads the current skill
+body when `show` is invoked. There is no installer or scaffold command.
 
 `ply-mcp` reads `[servers.NAME]` entries from user and ancestor project
 `mcp.toml` files. A nearer server definition wins. Discovery only reads config;

@@ -190,3 +190,54 @@ func TestMCPRequestHonorsContext(t *testing.T) {
 		t.Fatal("ignored canceled context")
 	}
 }
+
+func TestSkillPrecedence(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	nested := filepath.Join(project, "nested")
+	os.MkdirAll(nested, 0700)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Chdir(nested)
+	write := func(root, name, text string) {
+		path := filepath.Join(root, "skills", name)
+		os.MkdirAll(path, 0700)
+		os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(text), 0600)
+	}
+	write(filepath.Join(project, ".ply"), "same", "parent ply")
+	write(filepath.Join(project, ".agents"), "same", "parent agents")
+	write(filepath.Join(nested, ".agents"), "same", "near agents")
+	write(filepath.Join(nested, ".ply"), "same", "near ply")
+	write(filepath.Join(home, ".agents"), "user", "user agents")
+	write(UserDir(), "user", "user ply")
+	write(filepath.Join(home, ".agents"), "agents-only", "shared skill")
+	read := func(name string) string {
+		f, e := os.CreateTemp(t.TempDir(), "stdout")
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer f.Close()
+		old := os.Stdout
+		os.Stdout = f
+		code := Skill([]string{"show", name})
+		os.Stdout = old
+		b, _ := os.ReadFile(f.Name())
+		if code != 0 {
+			t.Fatal(code)
+		}
+		return string(b)
+	}
+	if got := read("same"); got != "near ply" {
+		t.Fatal(got)
+	}
+	os.RemoveAll(filepath.Join(nested, ".ply"))
+	if got := read("same"); got != "near agents" {
+		t.Fatal(got)
+	}
+	if got := read("user"); got != "user ply" {
+		t.Fatal(got)
+	}
+	if got := read("agents-only"); got != "shared skill" {
+		t.Fatal(got)
+	}
+}

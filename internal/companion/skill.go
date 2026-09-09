@@ -25,7 +25,18 @@ func projectDirs() []string {
 }
 func Skill(args []string) int {
 	found := map[string]skill{}
-	dirs := append(projectDirs(), UserDir())
+	dirs := []string{}
+	home, _ := os.UserHomeDir()
+	for _, dir := range projectDirs() {
+		dirs = append(dirs, dir)
+		if filepath.Dir(dir) != home {
+			dirs = append(dirs, filepath.Join(filepath.Dir(dir), ".agents"))
+		}
+	}
+	dirs = append(dirs, UserDir())
+	if home, e := os.UserHomeDir(); e == nil {
+		dirs = append(dirs, filepath.Join(home, ".agents"))
+	}
 	for _, dir := range dirs {
 		paths, _ := filepath.Glob(filepath.Join(dir, "skills", "*", "SKILL.md"))
 		for _, p := range paths {
