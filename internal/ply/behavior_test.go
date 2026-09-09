@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,6 +58,36 @@ func TestResponsePersistenceAndApprovalOrder(t *testing.T) {
 	}
 	if approvals != 2 || usage != 2 || len(pending(items)) != 0 || latest(items, "reasoning") == nil {
 		t.Fatal(items)
+	}
+}
+
+func TestIndependentCommandOutputLimits(t *testing.T) {
+	for _, background := range []bool{false, true} {
+		t.Run(fmt.Sprint(background), func(t *testing.T) {
+			dir := t.TempDir()
+			record := recorded(t, dir, []Item{callItem("bash", "lines", BashArgs{Command: "printf 'one\ntwo\nthree\nfour\nfive\nsix\n'", Justification: "read", Background: background})}, []Item{message("assistant", "Done.")}, []Item{message("assistant", "Collected.")})
+			out, e := cli(t, dir, "--output-max-lines", "2", "--bash-max-output-lines", "6", "--provider", "replay:"+record, "-m", "run", "t.jsonl")
+			if e != nil {
+				t.Fatal(e, out)
+			}
+			items := mustItems(t, filepath.Join(dir, "t.jsonl"))
+			key, typ := "output", "function_call_output"
+			if background {
+				key, typ = "output_tail", "ply.task_done"
+			}
+			result := latest(items, typ)
+			if !strings.Contains(str(result[key]), "three\nfour") {
+				t.Fatal(result)
+			}
+			if strings.Contains(out, "  three\n") || !strings.Contains(out, "full output:") {
+				t.Fatal(out)
+			}
+			// History may display more than the model limit by reading the retained log.
+			out, e = cli(t, dir, "--output-max-lines", "10", "t.jsonl")
+			if e != nil || !strings.Contains(out, "  three\n") {
+				t.Fatal(e, out)
+			}
+		})
 	}
 }
 
@@ -128,6 +159,23 @@ func TestModesAreTurnScopedAndSurviveCompaction(t *testing.T) {
 		if textOf(i) == "planning only" {
 			t.Fatal("old mode leaked")
 		}
+	}
+}
+
+func TestUsageTriggersCompactionOnToolRound(t *testing.T) {
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record.jsonl")
+	fixture(t, record, callItem("bash", "read", BashArgs{Command: "pwd", Justification: "inspect"}),
+		Item{"type": "ply.usage", "input_tokens": 90, "output_tokens": 2},
+		message("assistant", "Continuation summary."), Item{"type": "ply.usage", "input_tokens": 95, "output_tokens": 5},
+		message("assistant", "Finished."), Item{"type": "ply.usage", "input_tokens": 12, "output_tokens": 2})
+	out, e := cli(t, dir, "--context-window", "100", "--provider", "replay:"+record, "-m", "inspect", "t.jsonl")
+	if e != nil {
+		t.Fatal(e, out)
+	}
+	items := mustItems(t, filepath.Join(dir, "t.jsonl"))
+	if latest(items, "ply.compaction") == nil || num(latest(items, "ply.usage")["total_input"]) != 197 {
+		t.Fatal(items)
 	}
 }
 

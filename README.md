@@ -42,14 +42,19 @@ context_window = 0          # zero inherits the main context window
 [bash]
 shell = "/bin/bash"
 default_timeout = 120
+max_output_lines = 200       # model-facing command output
 
 [output]
-max_lines = 200
+max_lines = 200              # terminal rendering only
 color = "auto"
 show_thinking = false
+show_usage = true
 ```
 
-Set `OPENAI_API_KEY` for an authenticated Responses endpoint, then:
+Set `PLY_API_KEY` for an authenticated Responses endpoint, or set `api_key` in
+trusted configuration. `--api-key` follows the same precedence as other options,
+but environment/configuration avoids exposing the key in process arguments.
+`OPENAI_API_KEY` is no longer read; migrate existing setups to `PLY_API_KEY`. Then:
 
 ```sh
 ply -m 'Explain this repository' work.jsonl
@@ -90,6 +95,17 @@ Activity clears before prose or approval prompts and is suppressed in quiet,
 redirected-stderr, and subagent output. A command is displayed immediately before
 its approval and result, even when a response contains several commands.
 
+At turn completion, stderr reports the latest provider-reported input token count,
+context-window size, and percentage. This is a reported snapshot, not an exact
+live context count. Disable it with `--no-output-show-usage`; quiet and subagent
+modes suppress it. Every completed response, including tool rounds, records usage.
+
+`output.max_lines` limits only terminal command output. `bash.max_output_lines`
+independently limits model-facing results; both default to 200. This changes the
+old meaning of `output.max_lines`: migrate model-output tuning to
+`bash.max_output_lines`. Full command logs remain available at the paths shown
+in truncation notices. History can display more from retained logs; if a log is
+missing, it falls back to the stored result.
 Whitespace-only assistant messages are hidden, and outer blank lines are normalized
 without changing the stored provider items.
 Exit codes are 0 for completion/detachment, 1 for errors, 2 for invalid CLI

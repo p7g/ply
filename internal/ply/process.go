@@ -44,7 +44,7 @@ func truncate(s string, n int, path string, tail bool) string {
 		return s
 	}
 	if tail {
-		return strings.Join(lines[len(lines)-n:], "\n")
+		return fmt.Sprintf("[... %d lines omitted; full output: %s]\n", len(lines)-n, path) + strings.Join(lines[len(lines)-n:], "\n")
 	}
 	head := (n + 1) / 2
 	return strings.Join(lines[:head], "\n") + fmt.Sprintf("\n[... %d lines omitted; full output: %s]\n", len(lines)-n, path) + strings.Join(lines[len(lines)-(n-head):], "\n")
@@ -319,14 +319,20 @@ func (a *App) scanTasks() (int, int, error) {
 			}
 		}
 		out, _ := os.ReadFile(t.Log)
-		tail := truncate(string(out), a.Config.N("output.max_lines"), t.Log, true)
+		tail := truncate(string(out), a.Config.N("bash.max_output_lines"), t.Log, true)
+		outputPath := t.Log
 		if t.Result != "" {
+			outputPath = t.Log + ".result"
 			tail = t.Result
 			if t.ChildTranscript != "" {
 				tail += "\nTranscript: " + t.ChildTranscript
 			}
+			if e := os.WriteFile(outputPath, []byte(tail), 0600); e != nil {
+				return running, completed, e
+			}
+			tail = truncate(tail, a.Config.N("bash.max_output_lines"), outputPath, true)
 		}
-		if e = a.T.Append(Item{"type": "ply.task_done", "task": id, "exit_code": t.Exit, "duration_s": t.Duration, "timed_out": t.TimedOut, "output_tail": tail}); e != nil {
+		if e = a.T.Append(Item{"type": "ply.task_done", "task": id, "exit_code": t.Exit, "duration_s": t.Duration, "timed_out": t.TimedOut, "output_tail": tail, "ply.output_path": outputPath}); e != nil {
 			return running, completed, e
 		}
 		completed++
@@ -335,6 +341,8 @@ func (a *App) scanTasks() (int, int, error) {
 }
 func (a *App) execute(call Item) error {
 	output := ""
+	outputPath := ""
+	outputSuffix := ""
 	switch str(call["name"]) {
 	case "plan":
 		var p struct {
@@ -381,6 +389,7 @@ func (a *App) execute(call Item) error {
 		if e != nil {
 			return e
 		}
+		outputPath = path
 		a.Status.Show("running command...")
 		code, duration, timed, runErr := a.foreground(args, f)
 		a.Status.Clear()
@@ -389,7 +398,8 @@ func (a *App) execute(call Item) error {
 		if e != nil {
 			return e
 		}
-		output = truncate(string(b), a.Config.N("output.max_lines"), path, false)
+		output = truncate(string(b), a.Config.N("bash.max_output_lines"), path, false)
+		bodyLength := len(output)
 		if runErr != nil && a.Context.Err() == nil {
 			output += "\nERROR: " + runErr.Error()
 		}
@@ -400,10 +410,11 @@ func (a *App) execute(call Item) error {
 		if a.Context.Err() != nil || len(a.Steers) > 0 {
 			output += "\nINTERRUPTED"
 		}
+		outputSuffix = output[bodyLength:]
 	default:
 		output = "ERROR: unknown tool " + str(call["name"])
 	}
-	if e := a.T.Append(Item{"type": "function_call_output", "call_id": call["call_id"], "output": output, "ply.tool": call["name"]}); e != nil {
+	if e := a.T.Append(Item{"type": "function_call_output", "call_id": call["call_id"], "output": output, "ply.tool": call["name"], "ply.output_path": outputPath, "ply.output_suffix": outputSuffix}); e != nil {
 		return e
 	}
 	if a.Context.Err() != nil || len(a.Steers) > 0 {

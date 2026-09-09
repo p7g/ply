@@ -11,6 +11,7 @@ import (
 
 type Renderer struct {
 	W                      io.Writer
+	MaxLines               int
 	BeforeWrite            func()
 	Quiet, Thinking, Color bool
 }
@@ -55,7 +56,7 @@ func (r Renderer) Item(i Item) {
 		if str(i["ply.tool"]) == "plan" && str(i["output"]) == "Plan updated." {
 			return
 		}
-		s = indent(str(i["output"]), "  ")
+		s = indent(r.output(i, "output", false), "  ")
 		dim = true
 	case "ply.plan":
 		s = "[plan updated]"
@@ -64,7 +65,7 @@ func (r Renderer) Item(i Item) {
 		s = fmt.Sprintf("[task %v started]", i["task"])
 		dim = true
 	case "ply.task_done":
-		s = fmt.Sprintf("  [task %v done, exit %v, %vs]\n%s", i["task"], i["exit_code"], i["duration_s"], indent(str(i["output_tail"]), "  "))
+		s = fmt.Sprintf("  [task %v done, exit %v, %vs]\n%s", i["task"], i["exit_code"], i["duration_s"], indent(r.output(i, "output_tail", true), "  "))
 		dim = true
 	case "ply.compaction":
 		if i["summary"] == nil {
@@ -174,4 +175,28 @@ func trimLeadingBlankLines(s string) string {
 		}
 		s = s[n+1:]
 	}
+}
+
+func (r Renderer) output(i Item, key string, tail bool) string {
+	s := str(i[key])
+	if r.MaxLines < 2 {
+		return s
+	}
+	path := str(i["ply.output_path"])
+	if path != "" {
+		if b, e := os.ReadFile(path); e == nil {
+			if key == "output" {
+				// Execution metadata remains in the stored tool result.
+				if suffix := str(i["ply.output_suffix"]); suffix != "" {
+					return truncate(string(b), r.MaxLines, path, tail) + suffix
+				}
+				if n := strings.LastIndex(s, "\n[exit "); n >= 0 {
+					return truncate(string(b), r.MaxLines, path, tail) + s[n:]
+				}
+			} else {
+				return truncate(string(b), r.MaxLines, path, tail)
+			}
+		}
+	}
+	return truncate(s, r.MaxLines, path, tail)
 }

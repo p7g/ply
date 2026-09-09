@@ -103,7 +103,7 @@ func run(ctx context.Context, o Options) error {
 	}
 	status := &statusLine{W: os.Stderr, Enabled: tty(os.Stderr) && !o.Subagent && !o.Quiet}
 	defer status.Clear()
-	r := Renderer{BeforeWrite: status.Clear, W: os.Stdout, Quiet: o.Quiet, Thinking: c.B("output.show_thinking"), Color: color}
+	r := Renderer{BeforeWrite: status.Clear, W: os.Stdout, Quiet: o.Quiet, Thinking: c.B("output.show_thinking"), Color: color, MaxLines: c.N("output.max_lines")}
 	action := o.Compact || o.Clear || o.ShowPlan || o.Tasks || o.HasKill || o.ShowConfig
 	msg, turn, e := inputMessage(o, items, action)
 	if e != nil {
@@ -467,6 +467,12 @@ func run(ctx context.Context, o Options) error {
 		}
 	}
 
+	if c.B("output.show_usage") && !o.Quiet && !o.Subagent {
+		u := latest(t.Items, "ply.usage")
+		if u != nil {
+			fmt.Fprintf(os.Stderr, "[context: %d / %d tokens, %.1f%%; latest reported input]\n", num(u["input_tokens"]), c.N("context_window"), 100*float64(num(u["input_tokens"]))/float64(c.N("context_window")))
+		}
+	}
 	if o.Subagent {
 		event(Item{"event": "result", "text": result})
 	}

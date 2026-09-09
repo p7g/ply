@@ -23,8 +23,8 @@ var defaults = map[string]any{
 	"provider.retries": 5,
 	"approve.command":  "ply-approve-chain ply-approve-allowlist ply-approve-ask",
 	"approve.model":    "", "approve.context_window": 0,
-	"bash.shell": "/bin/bash", "bash.default_timeout": 120,
-	"output.max_lines": 200, "output.color": "auto", "output.show_thinking": false,
+	"bash.shell": "/bin/bash", "bash.default_timeout": 120, "bash.max_output_lines": 200,
+	"output.max_lines": 200, "output.color": "auto", "output.show_thinking": false, "output.show_usage": true,
 }
 
 func (c Config) S(k string) string { return str(c.Values[k]) }
@@ -198,7 +198,7 @@ func resolve(cwd string, o Options) (Config, error) {
 			}
 		}
 	}
-	if c.N("provider.retries") < 0 || c.N("bash.default_timeout") <= 0 || c.N("output.max_lines") < 2 || c.N("approve.context_window") < 0 || c.N("context_window") < 0 {
+	if c.N("provider.retries") < 0 || c.N("bash.default_timeout") <= 0 || c.N("output.max_lines") < 2 || c.N("bash.max_output_lines") < 2 || c.N("approve.context_window") < 0 || c.N("context_window") < 0 {
 		return c, fmt.Errorf("invalid retries, timeout, output limits, or context window")
 	}
 	f := c.Values["compact_at"]
