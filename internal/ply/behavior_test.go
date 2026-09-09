@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,6 +164,31 @@ func TestModesAreTurnScopedAndSurviveCompaction(t *testing.T) {
 	}
 }
 
+func TestProviderCredentialsAndReasoningSummary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer configured-key" {
+			t.Error("missing configured credential")
+		}
+		var body Item
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["reasoning"] == nil {
+			t.Error("summary not requested")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"A summary\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Answer\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"usage\":{\"input_tokens\":20}}}\n\n")
+	}))
+	defer srv.Close()
+	p := Provider{Config: Config{Values: map[string]any{"base_url": srv.URL, "api_key": "configured-key", "output.show_thinking": true}}, Client: srv.Client()}
+	var summary, prose strings.Builder
+	p.SummaryDelta = func(_ int, s string) { summary.WriteString(s) }
+	_, _, e := p.Call(context.Background(), nil, true, func(s string) { prose.WriteString(s) })
+	if e != nil || summary.String() != "A summary" || prose.String() != "Answer" {
+		t.Fatal(e, summary.String(), prose.String())
+	}
+}
+
 func TestUsageTriggersCompactionOnToolRound(t *testing.T) {
 	dir := t.TempDir()
 	record := filepath.Join(dir, "record.jsonl")
@@ -220,6 +247,7 @@ func TestNestedPlanApproval(t *testing.T) {
 	}
 }
 
+// Ensure the documented no-tools API-key path also uses configuration without a real service.
 func TestApprovalModelSubprocessEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	record := recorded(t, dir, []Item{message("assistant", "ok")})
@@ -233,6 +261,46 @@ func TestApprovalModelSubprocessEnvironment(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join(dir, "t.jsonl"))
 	if strings.Contains(string(raw), "env-secret") {
 		t.Fatal("secret persisted")
+	}
+}
+
+func TestStreamingReasoningRenderedOnceAndPersisted(t *testing.T) {
+	for _, show := range []bool{true, false} {
+		t.Run(fmt.Sprint(show), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"output_index\":0,\"delta\":\"Visible summary.\"}\n\n")
+				fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Final answer.\"}\n\n")
+				response := Item{"type": "response.completed", "response": Item{"output": []Item{
+					{"type": "reasoning", "encrypted_content": "opaque", "summary": []Item{{"type": "summary_text", "text": "Visible summary."}}},
+					{"type": "reasoning", "summary": []Item{{"type": "summary_text", "text": "Unstreamed summary."}}},
+					message("assistant", "Final answer."),
+				}, "usage": Item{"input_tokens": 5}}}
+				b, _ := json.Marshal(response)
+				fmt.Fprintf(w, "data: %s\n\n", b)
+			}))
+			defer srv.Close()
+			dir := t.TempDir()
+			flag := "--no-show-thinking"
+			if show {
+				flag = "--show-thinking"
+			}
+			out, e := cli(t, dir, "--base-url", srv.URL, flag, "-m", "answer", "t.jsonl")
+			if e != nil {
+				t.Fatal(e, out)
+			}
+			expected := 0
+			if show {
+				expected = 1
+			}
+			if strings.Count(out, "Visible summary.") != expected || strings.Count(out, "Unstreamed summary.") != expected {
+				t.Fatal(out)
+			}
+			raw, _ := os.ReadFile(filepath.Join(dir, "t.jsonl"))
+			if !strings.Contains(string(raw), "opaque") || strings.Contains(out, "opaque") {
+				t.Fatal("reasoning storage/display mismatch")
+			}
+		})
 	}
 }
 

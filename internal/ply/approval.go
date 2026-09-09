@@ -194,11 +194,24 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 		e error
 	}
 	ch := make(chan result, 1)
-	deltas := make(chan string, 64)
+	type chunk struct {
+		text      string
+		reasoning bool
+		index     int
+	}
+	deltas := make(chan chunk, 64)
+	a.ReasoningStreamed = map[int]bool{}
+	a.Provider.SummaryDelta = func(index int, s string) {
+		select {
+		case deltas <- chunk{text: s, reasoning: true, index: index}:
+		case <-ctx.Done():
+		}
+	}
+	defer func() { a.Provider.SummaryDelta = nil }()
 	go func() {
 		r, s, e := a.Provider.Call(ctx, input, tools, func(s string) {
 			select {
-			case deltas <- s:
+			case deltas <- chunk{text: s}:
 			case <-ctx.Done():
 			}
 		})
@@ -213,7 +226,27 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	prose := proseStream{W: os.Stdout, BeforeWrite: a.Status.Clear}
-	printDelta := func(s string) {
+	summary := proseStream{W: os.Stdout, BeforeWrite: a.Status.Clear}
+	printDelta := func(c chunk) {
+		if c.reasoning {
+			if stream && !a.Options.Subagent && !a.Options.Quiet && a.Config.B("output.show_thinking") {
+				if !summary.Started && strings.TrimSpace(c.text) == "" {
+					return
+				}
+				if !summary.Started {
+					a.Status.Clear()
+					fmt.Fprint(os.Stdout, "~ ")
+				}
+				summary.Delta(c.text)
+				if summary.Started {
+					a.ReasoningStreamed[c.index] = true
+				}
+			}
+			return
+		}
+		summary.End()
+		summary.Started = false
+		s := c.text
 		if stream && !a.Options.Subagent {
 			prose.Delta(s)
 		}
@@ -254,6 +287,7 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 				printDelta(<-deltas)
 			}
 			a.Status.Clear()
+			summary.End()
 			prose.End()
 			a.Streamed = prose.Started
 			if res.e != nil && ctx.Err() != nil {

@@ -27,11 +27,12 @@ type Response struct {
 	Error  any    `json:"error"`
 }
 type Provider struct {
-	Config   Config
-	Recorded []Response
-	Position int
-	Client   *http.Client
-	Replay   bool
+	Config       Config
+	Recorded     []Response
+	Position     int
+	Client       *http.Client
+	Replay       bool
+	SummaryDelta func(int, string)
 }
 
 func newProvider(c Config, s string) (*Provider, error) {
@@ -95,6 +96,9 @@ func (p *Provider) Call(ctx context.Context, input []Item, withTools bool, delta
 		return r, "", nil
 	}
 	body := Item{"model": p.Config.S("model"), "input": input, "stream": true, "store": false, "include": []string{"reasoning.encrypted_content"}}
+	if p.Config.B("output.show_thinking") {
+		body["reasoning"] = Item{"summary": "auto"}
+	}
 	if withTools {
 		body["tools"] = toolSchemas
 	}
@@ -166,10 +170,11 @@ func (p *Provider) request(ctx context.Context, b []byte, delta func(string)) (R
 			return Response{}, false, nil
 		}
 		var event struct {
-			Type     string   `json:"type"`
-			Delta    string   `json:"delta"`
-			Response Response `json:"response"`
-			Message  string   `json:"message"`
+			Type        string   `json:"type"`
+			OutputIndex int      `json:"output_index"`
+			Delta       string   `json:"delta"`
+			Response    Response `json:"response"`
+			Message     string   `json:"message"`
 		}
 		decoder := json.NewDecoder(strings.NewReader(raw))
 		decoder.UseNumber()
@@ -181,6 +186,14 @@ func (p *Provider) request(ctx context.Context, b []byte, delta func(string)) (R
 			partial.WriteString(event.Delta)
 			if delta != nil {
 				delta(event.Delta)
+			}
+		case "response.reasoning_summary_text.delta":
+			if p.SummaryDelta != nil {
+				p.SummaryDelta(event.OutputIndex, event.Delta)
+			}
+		case "response.reasoning_summary_text.done":
+			if p.SummaryDelta != nil {
+				p.SummaryDelta(event.OutputIndex, "\n")
 			}
 		case "response.completed":
 			return event.Response, true, nil

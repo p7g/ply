@@ -95,6 +95,10 @@ Activity clears before prose or approval prompts and is suppressed in quiet,
 redirected-stderr, and subagent output. A command is displayed immediately before
 its approval and result, even when a response contains several commands.
 
+`--show-thinking` displays provider-supplied reasoning summaries, including streamed
+summaries when available. Providers without summaries show none. Encrypted
+reasoning is preserved for replay but never displayed.
+
 At turn completion, stderr reports the latest provider-reported input token count,
 context-window size, and percentage. This is a reported snapshot, not an exact
 live context count. Disable it with `--no-output-show-usage`; quiet and subagent

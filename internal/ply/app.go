@@ -21,22 +21,23 @@ import (
 const Version = "0.1.0"
 
 type App struct {
-	T               *Transcript
-	Options         Options
-	Config          Config
-	Path, Cwd       string
-	Context         context.Context
-	Provider        *Provider
-	Renderer        Renderer
-	Proxy           chan proxyRequest
-	Protocol        *Protocol
-	Children        []io.WriteCloser
-	Steers          []string
-	ApprovalID      int
-	Streamed        bool
-	CommandRendered bool
-	Modes           []Item
-	Status          *statusLine
+	T                 *Transcript
+	Options           Options
+	Config            Config
+	Path, Cwd         string
+	Context           context.Context
+	Provider          *Provider
+	Renderer          Renderer
+	Proxy             chan proxyRequest
+	Protocol          *Protocol
+	Children          []io.WriteCloser
+	Steers            []string
+	ApprovalID        int
+	Streamed          bool
+	ReasoningStreamed map[int]bool
+	CommandRendered   bool
+	Modes             []Item
+	Status            *statusLine
 }
 
 func Main(args []string) int {
@@ -352,7 +353,7 @@ func run(ctx context.Context, o Options) error {
 		}
 		calls := []Item{}
 		result = ""
-		for _, i := range resp.Output {
+		for index, i := range resp.Output {
 			if str(i["type"]) == "message" && str(i["role"]) == "assistant" {
 				result += textOf(i)
 				if a.Streamed {
@@ -360,7 +361,7 @@ func run(ctx context.Context, o Options) error {
 				} else {
 					e = t.Append(i)
 				}
-			} else if str(i["type"]) == "function_call" {
+			} else if str(i["type"]) == "function_call" || (str(i["type"]) == "reasoning" && a.ReasoningStreamed[index]) {
 				e = a.appendSilent(i)
 			} else {
 				e = t.Append(i)
@@ -466,7 +467,6 @@ func run(ctx context.Context, o Options) error {
 			fmt.Println(str(p["text"]))
 		}
 	}
-
 	if c.B("output.show_usage") && !o.Quiet && !o.Subagent {
 		u := latest(t.Items, "ply.usage")
 		if u != nil {
