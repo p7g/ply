@@ -81,6 +81,10 @@ Without message flags, nonempty piped stdin becomes a message; an empty pipe
 renders the transcript. Follow and transcript actions do not consume stdin.
 `-q` prints only assistant prose. `$PAGER` defaults to `less -FRX`; live output
 is never paged. `NO_COLOR` disables color, including `--output-color=always`.
+While awaiting model output, tty stderr shows `thinking…` with elapsed seconds.
+It clears before prose, commands, or approval prompts; redirected stderr is silent.
+Whitespace-only assistant messages are hidden, and outer blank lines are normalized
+without changing the stored provider items.
 Exit codes are 0 for completion/detachment, 1 for errors, 2 for invalid CLI
 syntax, and 130 for an interrupted model round or foreground command.
 
@@ -113,7 +117,9 @@ Every bash call is approved before execution. The approver receives
 `PLY_COMMAND`, `PLY_COMMAND_TRUNCATED`, `PLY_JUSTIFICATION`, `PLY_USER_MSG`,
 `PLY_CWD`, `PLY_TRANSCRIPT`, `PLY_BACKGROUND`, `PLY_TIMEOUT`,
 `PLY_APPROVAL_DEPTH`, and `PLY_CONFIG_DIR`. It returns 0 to approve, 1 to deny,
-or 2 to abstain. Denial text on stdout goes back to the model. An unhandled
+or 2 to abstain. The optional `PLY_COMMAND_RENDERED=1` hint tells the bundled
+ask approver that the command is already visible in the terminal, so it only
+prints its confirmation prompt. Denial text on stdout goes back to the model. An unhandled
 abstention denies execution.
 
 Bundled programs:
@@ -296,7 +302,9 @@ Replay mode consumes response groups separated by `ply.usage`, including saved
 compaction summaries. It still executes tools and applies approval, so use a
 scratch working directory and a suitable approver. Tests use temporary files,
 local mock servers, and real subprocesses: no model access or external service
-is required. Integration tests build their own copies of the executables.
+is required. Integration tests build their own copies of the executables. The interactive
+approval regression uses Python 3’s standard-library `pty` module when Python 3
+is installed; no additional Python packages are needed.
 
 Code is organized in `internal/ply` around transcript replay, configuration,
 provider transport, process supervision, approval, and rendering. Independent

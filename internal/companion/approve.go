@@ -31,7 +31,13 @@ func Approve(kind string, args []string) int {
 			return 1
 		}
 		defer f.Close()
-		fmt.Fprintf(f, "%s\n\n%s\n[approval depth %s] Allow? [y/N] ", os.Getenv("PLY_COMMAND"), os.Getenv("PLY_JUSTIFICATION"), os.Getenv("PLY_APPROVAL_DEPTH"))
+		if os.Getenv("PLY_COMMAND_RENDERED") != "1" {
+			fmt.Fprintf(f, "$ %s\n", os.Getenv("PLY_COMMAND"))
+			if why := os.Getenv("PLY_JUSTIFICATION"); why != "" {
+				fmt.Fprintln(f, why)
+			}
+		}
+		fmt.Fprintf(f, "[approval depth %s] Allow? [y/N] ", os.Getenv("PLY_APPROVAL_DEPTH"))
 		line, _ := bufio.NewReader(f).ReadString('\n')
 		if strings.EqualFold(strings.TrimSpace(line), "y") {
 			return 0

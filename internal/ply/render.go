@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 type Renderer struct {
 	W                      io.Writer
+	BeforeWrite            func()
 	Quiet, Thinking, Color bool
 }
 
@@ -29,7 +31,7 @@ func (r Renderer) Item(i Item) {
 		case "user":
 			s = indent(textOf(i), "> ")
 		case "assistant":
-			s = textOf(i)
+			s = displayProse(textOf(i))
 		}
 	case "reasoning":
 		if r.Thinking {
@@ -79,6 +81,9 @@ func (r Renderer) Item(i Item) {
 		if dim && r.Color {
 			s = "\x1b[2m" + s + "\x1b[0m"
 		}
+		if r.BeforeWrite != nil {
+			r.BeforeWrite()
+		}
 		fmt.Fprint(r.W, s, "\n\n")
 	}
 }
@@ -111,4 +116,56 @@ func page(s string, c Config) {
 		}
 	}
 	fmt.Print(s)
+}
+
+// Normalize only outer message whitespace, keeping indentation and paragraph
+// breaks inside the prose. Raw provider text remains unchanged in the log.
+func displayProse(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	return strings.TrimRightFunc(trimLeadingBlankLines(s), unicode.IsSpace)
+}
+
+// Hold whitespace until the next visible token: whitespace-only messages render
+// nothing, and trailing newlines never multiply the renderer's item separator.
+type proseStream struct {
+	W           io.Writer
+	BeforeWrite func()
+	Started     bool
+	pending     string
+}
+
+func (s *proseStream) Delta(delta string) {
+	text := s.pending + delta
+	s.pending = ""
+	if !s.Started {
+		text = trimLeadingBlankLines(text)
+	}
+	body := strings.TrimRightFunc(text, unicode.IsSpace)
+	s.pending = text[len(body):]
+	if body == "" {
+		return
+	}
+	if s.BeforeWrite != nil {
+		s.BeforeWrite()
+	}
+	fmt.Fprint(s.W, body)
+	s.Started = true
+}
+func (s *proseStream) End() {
+	if s.Started {
+		fmt.Fprint(s.W, "\n\n")
+	}
+	s.pending = ""
+}
+
+func trimLeadingBlankLines(s string) string {
+	for {
+		n := strings.IndexByte(s, '\n')
+		if n < 0 || strings.TrimSpace(s[:n]) != "" {
+			return s
+		}
+		s = s[n+1:]
+	}
 }

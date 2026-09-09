@@ -33,6 +33,7 @@ type App struct {
 	Steers     []string
 	ApprovalID int
 	Streamed   bool
+	Status     *statusLine
 }
 
 func Main(args []string) int {
@@ -94,7 +95,9 @@ func run(ctx context.Context, o Options) error {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		color = false
 	}
-	r := Renderer{W: os.Stdout, Quiet: o.Quiet, Thinking: c.B("output.show_thinking"), Color: color}
+	status := &statusLine{W: os.Stderr, Enabled: tty(os.Stderr) && !o.Subagent}
+	defer status.Clear()
+	r := Renderer{BeforeWrite: status.Clear, W: os.Stdout, Quiet: o.Quiet, Thinking: c.B("output.show_thinking"), Color: color}
 	action := o.Compact || o.Clear || o.ShowPlan || o.Tasks || o.HasKill || o.ShowConfig
 	msg, turn, e := inputMessage(o, items, action)
 	if e != nil {
@@ -169,7 +172,7 @@ func run(ctx context.Context, o Options) error {
 		return e
 	}
 	defer t.Close()
-	a := &App{T: t, Options: o, Config: c, Path: path, Cwd: cwd, Context: ctx, Renderer: r, Proxy: make(chan proxyRequest, 32)}
+	a := &App{T: t, Options: o, Config: c, Path: path, Cwd: cwd, Context: ctx, Renderer: r, Status: status, Proxy: make(chan proxyRequest, 32)}
 	defer func() {
 		for _, p := range a.Children {
 			p.Close()
@@ -397,9 +400,7 @@ func run(ctx context.Context, o Options) error {
 			}
 			break
 		}
-		if tty(os.Stderr) {
-			fmt.Fprintf(os.Stderr, "[waiting: %d tasks]\n", running)
-		}
+		a.Status.Show(fmt.Sprintf("[waiting: %d tasks]", running))
 		var commands <-chan Item
 		if a.Protocol != nil {
 			commands = a.Protocol.Commands
@@ -408,11 +409,13 @@ func run(ctx context.Context, o Options) error {
 		for {
 			select {
 			case <-ctx.Done():
+				a.Status.Clear()
 				if !o.Quiet && !o.Subagent {
 					fmt.Printf("[detached: %d tasks running]\n", running)
 				}
 				return nil
 			case p := <-a.Proxy:
+				a.Status.Clear()
 				if e = a.proxy(p); e != nil {
 					return fail(e)
 				}
@@ -437,6 +440,7 @@ func run(ctx context.Context, o Options) error {
 			}
 		}
 	}
+	a.Status.Clear()
 	if o.Plan && !o.Subagent {
 		if p := latest(t.Items, "ply.plan"); p != nil {
 			fmt.Println(str(p["text"]))

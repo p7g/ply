@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -103,9 +102,10 @@ func (a *App) approve(call Item, args BashArgs, depth int) (bool, string, error)
 		env := map[string]string{"PLY_COMMAND": command, "PLY_COMMAND_TRUNCATED": truncated, "PLY_JUSTIFICATION": args.Justification, "PLY_USER_MSG": user, "PLY_CWD": a.Cwd, "PLY_TRANSCRIPT": a.Path, "PLY_BACKGROUND": strconv.Itoa(btoi(args.Background)), "PLY_TIMEOUT": strconv.Itoa(args.Timeout), "PLY_APPROVAL_DEPTH": strconv.Itoa(depth), "PLY_CONFIG_DIR": a.Config.Project}
 		cmd := exec.CommandContext(a.Context, "/bin/sh", "-c", approver)
 		cmd.Dir = a.Cwd
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		// Interactive approvers must remain in the terminal's foreground group.
+		// A separate group receives SIGTTIN when it reads /dev/tty.
 		cmd.WaitDelay = time.Second
+		env["PLY_COMMAND_RENDERED"] = strconv.Itoa(btoi(depth == 0 && !a.Options.Quiet && tty(os.Stdout)))
 		cmd.Env = replaceEnv(os.Environ(), env)
 		cmd.Stderr = os.Stderr
 		b, e := cmd.Output()
@@ -177,11 +177,14 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 		})
 		ch <- result{r, s, e}
 	}()
-	shown := false
+	a.Status.Show("thinking…")
+	defer a.Status.Clear()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	prose := proseStream{W: os.Stdout, BeforeWrite: a.Status.Clear}
 	printDelta := func(s string) {
 		if stream && !a.Options.Subagent {
-			fmt.Print(s)
-			shown = true
+			prose.Delta(s)
 		}
 	}
 	var commands <-chan Item
@@ -190,13 +193,21 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 	}
 	for {
 		select {
+		case <-ticker.C:
+			if !prose.Started {
+				a.Status.Tick()
+			}
 		case s := <-deltas:
 			printDelta(s)
 		case p := <-a.Proxy:
+			a.Status.Clear()
 			if e := a.proxy(p); e != nil {
 				cancel()
 				<-ch
 				return Response{}, e
+			}
+			if !prose.Started {
+				a.Status.Show("thinking…")
 			}
 		case i, open := <-commands:
 			if !open {
@@ -211,10 +222,9 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 			for len(deltas) > 0 {
 				printDelta(<-deltas)
 			}
-			if shown {
-				fmt.Print("\n\n")
-			}
-			a.Streamed = shown
+			a.Status.Clear()
+			prose.End()
+			a.Streamed = prose.Started
 			if res.e != nil && ctx.Err() != nil {
 				if res.s != "" && stream {
 					i := message("assistant", res.s)
