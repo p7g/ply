@@ -1,0 +1,5 @@
+/bin/
+.ply/
+/ply-design.md
+*.test
+coverage.out

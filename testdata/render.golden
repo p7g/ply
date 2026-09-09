@@ -1,0 +1,14 @@
+> hello
+> world
+
+Looking.
+
+$ echo hi  [timeout 5s]
+
+  hi
+  [exit 0, 0.01s]
+
+[plan updated]
+
+[cleared]
+

@@ -1,0 +1,2 @@
+# Golden transcripts intentionally end with a blank separator between items.
+testdata/*.golden whitespace=-blank-at-eof

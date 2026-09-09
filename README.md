@@ -1,0 +1,305 @@
+# ply
+
+A minimal coding agent in Go. Its state is an append-only JSONL transcript; its
+model tools are `bash` and `plan`. It prints ordinary terminal text, without a
+TUI.
+
+## Build and configure
+
+Requires Go 1.25.6 or newer, Linux or macOS, and Bash. The only library dependency
+is `github.com/pelletier/go-toml/v2` v2.4.3. HTTP, streaming, JSON, process
+supervision, and locking use the standard library.
+
+```sh
+make build
+export PATH="$PWD/bin:$PATH"
+# Or: make install  (installs all executables in GOBIN / GOPATH/bin)
+
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/ply"
+${EDITOR:-vi} "${XDG_CONFIG_HOME:-$HOME/.config}/ply/config.toml"
+```
+
+Example **user** configuration; replace `YOUR_MODEL` and set its actual context
+window. There is deliberately no built-in model table.
+
+```toml
+model = "YOUR_MODEL"
+context_window = 200000
+base_url = "https://api.openai.com/v1"
+compact_at = 0.8
+pager = true
+detach = false
+
+[provider]
+retries = 5
+
+[approve]
+command = "ply-approve-chain ply-approve-allowlist ply-approve-ask"
+
+[bash]
+shell = "/bin/bash"
+default_timeout = 120
+
+[output]
+max_lines = 200
+color = "auto"
+show_thinking = false
+```
+
+Set `OPENAI_API_KEY` for an authenticated Responses endpoint, then:
+
+```sh
+ply -m 'Explain this repository' work.jsonl
+ply -m 'Implement the change and run the relevant tests' work.jsonl
+ply work.jsonl                         # review current context
+```
+
+The provider sends stateless streaming requests to `BASE_URL/responses`, with
+`store: false`, replayed items, and encrypted reasoning included. It supports
+OpenResponses-compatible endpoints; it does not translate Chat Completions API
+responses. See the [OpenResponses reference](https://www.openresponses.org/reference).
+No real API key is needed for tests or recorded-response replay.
+
+## Input and output
+
+```sh
+ply -m 'First paragraph' -m 'Second paragraph' work.jsonl
+ply -F request.txt work.jsonl
+printf 'Explain the build\n' | ply work.jsonl
+ply -e work.jsonl                      # $EDITOR, with commented transcript tail
+ply -H -m 'Continue' work.jsonl         # show context first
+ply -HH work.jsonl                     # show all history, including pre-compaction
+ply --tail 20 work.jsonl
+ply -f work.jsonl                      # read-only follow, no writer lock
+ply --show-thinking work.jsonl
+ply --no-pager work.jsonl
+ply --allow-empty work.jsonl           # react without adding a user message
+ply --no-tools -q -m 'Summarize this project' /tmp/summary.jsonl
+```
+
+Without message flags, nonempty piped stdin becomes a message; an empty pipe
+renders the transcript. Follow and transcript actions do not consume stdin.
+`-q` prints only assistant prose. `$PAGER` defaults to `less -FRX`; live output
+is never paged. `NO_COLOR` disables color, including `--output-color=always`.
+Exit codes are 0 for completion/detachment, 1 for errors, 2 for invalid CLI
+syntax, and 130 for an interrupted model round or foreground command.
+
+## Plan, compact, and execute
+
+```sh
+ply --plan -m 'Plan the migration' work.jsonl
+ply --plan -m 'Revise the rollout steps' work.jsonl
+ply --show-plan work.jsonl
+ply -m 'Implement the plan' work.jsonl
+
+# Preserve the plan but start execution in fresh context:
+ply --clear work.jsonl
+ply -m 'Implement the plan' work.jsonl
+
+# Or copy the plan to a different transcript:
+ply --plan-from work.jsonl -m 'Implement' implementation.jsonl
+ply --compact implementation.jsonl
+```
+
+Compaction happens automatically above `compact_at`, either a fraction of
+`context_window` or an absolute token count. It preserves the latest plan
+verbatim and asks the model to preserve the outstanding request. Neither
+compaction nor clear rewrites the file. Planning instructions are turn-scoped
+messages; switching modes does not change the stored system prompt.
+
+## Approval and autonomous runs
+
+Every bash call is approved before execution. The approver receives
+`PLY_COMMAND`, `PLY_COMMAND_TRUNCATED`, `PLY_JUSTIFICATION`, `PLY_USER_MSG`,
+`PLY_CWD`, `PLY_TRANSCRIPT`, `PLY_BACKGROUND`, `PLY_TIMEOUT`,
+`PLY_APPROVAL_DEPTH`, and `PLY_CONFIG_DIR`. It returns 0 to approve, 1 to deny,
+or 2 to abstain. Denial text on stdout goes back to the model. An unhandled
+abstention denies execution.
+
+Bundled programs:
+
+- `ply-approve-yolo`: approve everything.
+- `ply-approve-ask`: ask on `/dev/tty`; deny if no terminal is available.
+- `ply-approve-allowlist`: apply the first matching rule; otherwise abstain.
+- `ply-approve-auto`: invoke `ply --no-tools -q` on a temporary transcript and
+  accept only the exact answer `APPROVE`, `DENY`, or `UNSURE`.
+- `ply-approve-chain A B C`: execute programs in order until one does not
+  abstain. Each argument names an executable; use a wrapper for arguments.
+
+Allowlist rules are `allow REGEX` or `deny REGEX`, one per line. Empty lines and
+`#` comments are ignored. Expressions use Go's regexp syntax and are unanchored
+unless you add anchors. Rules match the **whole shell command string**, not
+individual shell tokens. Prefer fully anchored rules when allowing commands.
+Project `.ply/allowlist` takes precedence over the user-level `allowlist`.
+
+```text
+# Deny before broader allow rules.
+deny ^rm\b
+allow ^pwd$
+allow ^git status --short$
+```
+
+```sh
+# Interactive:
+ply --approve-command='ply-approve-chain ply-approve-allowlist ply-approve-ask' \
+  -m 'Fix the test' work.jsonl
+
+# Autonomous; the default wait loop collects background results:
+ply --approve-command=ply-approve-yolo -m 'Implement and test the change' work.jsonl
+
+# Policy, model, then human fallback:
+ply --approve-command='ply-approve-chain ply-approve-allowlist ply-approve-auto ply-approve-ask' \
+  -m 'Implement the change' work.jsonl
+```
+
+Approval is a policy hook, **not an OS sandbox**. Approved commands execute with
+your account's permissions. The transcript and full output logs may contain
+secrets; ply does not redact command output. API keys are read from the
+environment and are not recorded in `ply.config`.
+
+## Background tasks and subagents
+
+The model starts long commands with `background: true`. A separate supervisor
+owns the deadline, log, and completion record, so tasks survive the parent
+exiting. Timeouts and foreground interruption kill the command's process group.
+Commands must not daemonize or escape that group. Each invocation only collects
+tasks that belong to its own transcript, even when `.ply/` is shared.
+
+```sh
+ply --detach -m 'Start the long build' work.jsonl
+ply --tasks work.jsonl
+ply --kill=TASK_ID work.jsonl
+ply --kill work.jsonl                  # all unfinished tasks in this transcript
+ply --allow-empty work.jsonl           # collect results and continue
+
+# Ask the model to fan out through ordinary background bash calls:
+ply -m 'Use subagents to inspect the parser and renderer, then combine their findings' work.jsonl
+# A child invocation looks like:
+# ply --subagent -m 'Inspect the parser' parser-review.jsonl
+```
+
+Subagent stdout is JSONL (`hello`, `approval_request`, `result`, `error`); stdin
+accepts matching `approve` replies and `steer` messages. The parent proxies
+approvals through its own approver, incrementing depth at each hop, including
+while waiting on foreground work. Completion includes the child's final result
+and transcript path. Subagent mode waits for its tasks regardless of `detach`.
+Closing the parent denies subsequent child approvals with `no parent attached`.
+There is no reattachment or `--steer TASK` command in v1.
+
+Ctrl+C during streaming records the received assistant text with `ply.partial`
+and an interrupt marker. During a foreground command it records interrupted
+output. While waiting it detaches and exits successfully, leaving tasks running.
+
+```sh
+# Steering: Ctrl+C, then:
+ply -m 'Actually, focus on the parser first' work.jsonl
+
+# Queue turns:
+ply -m 'Make the change' work.jsonl && ply -m 'Review it' work.jsonl
+
+# Suspend with Ctrl+Z, then:
+# fg; ply -m 'Next request' work.jsonl
+```
+
+## Configuration and prompt sources
+
+Precedence: flags → `PLY_*` environment → project TOML → user TOML → defaults.
+Project config is `.ply/config.toml`, found walking upward from the transcript's
+working directory. `--config FILE` substitutes an explicit project config.
+For example, `output.max_lines` maps to `PLY_OUTPUT_MAX_LINES` and
+`--output-max-lines`. Boolean options have `--no-` inverses.
+
+```sh
+ply --show-config work.jsonl           # values and provenance; no API request
+PLY_OUTPUT_MAX_LINES=50 ply -m 'Run tests' work.jsonl
+ply --no-detach --no-show-thinking -m 'Continue' work.jsonl
+```
+
+Untrusted project configuration cannot set `model`, `base_url`, `provider.*`,
+`approve.*`, or `bash.shell`; ignored keys produce warnings. Opt in for one run
+with `--trust-project`, or add `trust = ["/absolute/path/to/repo"]` at the top
+level of your **user** config. This also applies to an explicit `--config` file.
+Other unknown or wrongly typed keys are errors.
+
+The system prompt consists of built-in guidance, `ply-* --ply-prompt` hints,
+ancestor `AGENTS.md` files (nearest last), and optional `system_file`. It is
+recorded once and reread only with `--refresh-system`. Discovery does not run
+bundled approvers and gives each companion a two-second deadline.
+
+## Companions
+
+`ply-skill` discovers `.ply/skills/*/SKILL.md` up the directory tree and
+`~/.config/ply/skills/*/SKILL.md`. A nearer skill with the same directory name
+wins. A `description:` frontmatter line supplies its prompt hint.
+
+```sh
+ply-skill list
+ply-skill show NAME
+```
+
+`ply-mcp` reads `[servers.NAME]` entries from user and ancestor project
+`mcp.toml` files. A nearer server definition wins. Discovery only reads config;
+connections happen when an approved command invokes list/schema/call.
+
+```toml
+# .ply/mcp.toml (examples; install your chosen server separately)
+[servers.local]
+command = "my-mcp-server"
+args = ["--stdio"]
+
+[servers.remote]
+url = "https://your-server.example/mcp"
+[servers.remote.headers]
+Authorization = "Bearer ${MCP_TOKEN}"
+```
+
+```sh
+ply-mcp list
+ply-mcp list local
+ply-mcp schema local tool_name
+ply-mcp call local tool_name '{"argument":"value"}'
+```
+
+The companion supports newline-delimited stdio and Streamable HTTP JSON/SSE,
+initialization, session headers, tool pagination, schemas, and calls. Environment
+variables expand in server `env` values and HTTP header values. It advertises
+no sampling or elicitation capabilities. Each command has a two-minute deadline.
+It does not implement OAuth login, legacy HTTP+SSE, or resumable SSE sessions;
+provide authentication through configured headers or server environment. See
+[MCP transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
+
+## Transcript, recovery, and tests
+
+Each JSONL item has a zero-based `seq` and UTC `ts`. Writes use `O_APPEND`, one
+write per item, `fsync`, and an exclusive nonblocking `flock`. Readers do not
+lock. A torn final line is ignored only by follow mode; a writer refuses it
+rather than silently rewriting history. Back up and repair a damaged file
+explicitly. A subsequent turn supplies interrupted results for unresolved tool
+calls; it never blindly reruns a command that might already have had effects.
+
+```sh
+jq 'select(.type=="ply.approval")' work.jsonl
+jq -r 'select(.type=="ply.usage") | .total_input' work.jsonl | tail -1
+
+# Recover from an unwanted change:
+ply -m 'Revert that change' work.jsonl
+# Or --clear, or use a new transcript. There is no history-rewriting undo.
+
+make test
+make vet
+
+# Replay recorded model responses through the actual harness:
+ply --provider=replay:recorded.jsonl -m 'Repeat the scenario' replayed.jsonl
+```
+
+Replay mode consumes response groups separated by `ply.usage`, including saved
+compaction summaries. It still executes tools and applies approval, so use a
+scratch working directory and a suitable approver. Tests use temporary files,
+local mock servers, and real subprocesses: no model access or external service
+is required. Integration tests build their own copies of the executables.
+
+Code is organized in `internal/ply` around transcript replay, configuration,
+provider transport, process supervision, approval, and rendering. Independent
+companions live in `internal/companion`; `cmd/` contains their entry points.
+Generated binaries, `.ply/tasks/`, and `.ply/out/` are gitignored. Task and output
+files remain on disk for inspection; ply does not garbage-collect them.
