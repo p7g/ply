@@ -26,6 +26,7 @@ window. There is deliberately no built-in model table.
 model = "YOUR_MODEL"
 context_window = 200000
 base_url = "https://api.openai.com/v1"
+# api_key = "..."  # alternatively, export PLY_API_KEY
 compact_at = 0.8
 pager = true
 detach = false
@@ -35,6 +36,8 @@ retries = 5
 
 [approve]
 command = "ply-approve-chain ply-approve-allowlist ply-approve-ask"
+model = ""                  # empty inherits the main model
+context_window = 0          # zero inherits the main context window
 
 [bash]
 shell = "/bin/bash"
@@ -119,11 +122,15 @@ once after a planning turn. Plan updates do not require shell approval.
 Every bash call is approved before execution. The approver receives
 `PLY_COMMAND`, `PLY_COMMAND_TRUNCATED`, `PLY_JUSTIFICATION`, `PLY_USER_MSG`,
 `PLY_CWD`, `PLY_TRANSCRIPT`, `PLY_BACKGROUND`, `PLY_TIMEOUT`,
-`PLY_APPROVAL_DEPTH`, and `PLY_CONFIG_DIR`. It returns 0 to approve, 1 to deny,
+`PLY_APPROVAL_DEPTH`, `PLY_PLAN_MODE`, and `PLY_CONFIG_DIR`.
+`PLY_PLAN_MODE=1` means inspection-only planning; nested approval requests carry
+the originating planning mode, and a planning parent also restricts its children. It returns 0 to approve, 1 to deny,
 or 2 to abstain. The optional `PLY_COMMAND_RENDERED=1` hint tells the bundled
 ask approver that the command is already visible in the terminal, so it only
-prints its confirmation prompt. Denial text on stdout goes back to the model. An unhandled
-abstention denies execution.
+prints its confirmation prompt. Denial text on stdout goes back to the model, which is instructed to adapt or
+explain the blocker. If all approvers abstain, their explanations are returned
+and execution is denied. A later definitive decision supplies the final reason.
+The prompt is `Allow? [y/N]`, with a subagent label for nested requests.
 
 Bundled programs:
 
@@ -131,7 +138,9 @@ Bundled programs:
 - `ply-approve-ask`: ask on `/dev/tty`; deny if no terminal is available.
 - `ply-approve-allowlist`: apply the first matching rule; otherwise abstain.
 - `ply-approve-auto`: invoke `ply --no-tools -q` on a temporary transcript and
-  accept only the exact answer `APPROVE`, `DENY`, or `UNSURE`.
+  accept a strict JSON object with `decision` (`APPROVE`, `DENY`, or `UNSURE`)
+  and a nonempty `reason`. Denials and abstentions return that reason. Malformed
+  responses and provider failures abstain with an explanation.
 - `ply-approve-chain A B C`: execute programs in order until one does not
   abstain. Each argument names an executable; use a wrapper for arguments.
 
@@ -161,10 +170,23 @@ ply --approve-command='ply-approve-chain ply-approve-allowlist ply-approve-auto 
   -m 'Implement the change' work.jsonl
 ```
 
+The auto approver receives labeled prose explaining the command, user request,
+working directory, justification, timeout, background execution, subagent depth,
+and planning status. It permits task-relevant reads outside the working directory
+and distinguishes them from broad filesystem searches, secret collection, and
+unauthorized writes or transmissions. In plan mode it permits inspection and
+denies implementation mutations. Truncated commands cause it to abstain.
+
+`approve.model` and `approve.context_window` select an independent approval model;
+empty/zero values inherit the effective main settings. The approval subprocess
+receives resolved model, context window, endpoint, retry count, and credentials
+through its environment, including overrides supplied as flags.
+
 Approval is a policy hook, **not an OS sandbox**. Approved commands execute with
 your account's permissions. The transcript and full output logs may contain
-secrets; ply does not redact command output. API keys are read from the
-environment and are not recorded in `ply.config`.
+secrets; ply does not redact command output. API keys may come from
+configuration or the environment; their values are redacted in `--show-config`
+and omitted from `ply.config` snapshots.
 
 ## Background tasks and subagents
 
@@ -224,7 +246,7 @@ PLY_OUTPUT_MAX_LINES=50 ply -m 'Run tests' work.jsonl
 ply --no-detach --no-show-thinking -m 'Continue' work.jsonl
 ```
 
-Untrusted project configuration cannot set `model`, `base_url`, `provider.*`,
+Untrusted project configuration cannot set `api_key`, `model`, `base_url`, `provider.*`,
 `approve.*`, or `bash.shell`; ignored keys produce warnings. Opt in for one run
 with `--trust-project`, or add `trust = ["/absolute/path/to/repo"]` at the top
 level of your **user** config. This also applies to an explicit `--config` file.

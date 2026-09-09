@@ -75,7 +75,7 @@ func TestChainAndAuto(t *testing.T) {
 	for _, tc := range []struct {
 		decision string
 		code     int
-	}{{"APPROVE", 0}, {"DENY", 1}, {"UNSURE", 2}, {"APPROVE with more text", 2}} {
+	}{{`{"decision":"APPROVE","reason":"authorized"}`, 0}, {`{"decision":"DENY","reason":"unauthorized write"}`, 1}, {`{"decision":"UNSURE","reason":"missing context"}`, 2}, {"APPROVE with more text", 2}} {
 		code, out := approver(t, "auto", map[string]string{"PATH": dir + ":" + os.Getenv("PATH"), "PLY_TEST_DECISION": tc.decision})
 		if code != tc.code {
 			t.Fatal(tc, code, out)
@@ -188,6 +188,54 @@ func TestMCPRequestHonorsContext(t *testing.T) {
 	c := &mcpClient{ctx: ctx, s: server{URL: "http://127.0.0.1:1"}}
 	if _, e := c.request("tools/list", rpc{}); e == nil {
 		t.Fatal("ignored canceled context")
+	}
+}
+
+func TestAutoDecisionValidationAndReasons(t *testing.T) {
+	for _, s := range []string{
+		`{"decision":"DENY"}`, `{"decision":"DENY","decision":"APPROVE","reason":"duplicate"}`, `{"decision":"APPROVE","reason":null}`, `{"decision":"APPROVE","reason":""}`,
+		`{"decision":"ALLOW","reason":"yes"}`, `{"decision":"DENY","reason":"no","extra":true}`,
+		`{"decision":"DENY","reason":"no"} {}`, "APPROVE",
+	} {
+		if _, _, e := parseDecision(s); e == nil {
+			t.Fatalf("accepted %s", s)
+		}
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "abstain"), []byte("#!/bin/sh\necho missing-context\nexit 2\n"), 0700)
+	code, out := approver(t, "chain", nil, filepath.Join(dir, "abstain"))
+	if code != 2 || !strings.Contains(out, "missing-context") {
+		t.Fatal(code, out)
+	}
+	for _, decision := range []string{"DENY", "UNSURE"} {
+		os.WriteFile(filepath.Join(dir, "ply"), []byte("#!/bin/sh\nprintf '%s' '{\"decision\":\""+decision+"\",\"reason\":\"specific reason\"}'\n"), 0700)
+		code, out = approver(t, "auto", map[string]string{"PATH": dir + ":" + os.Getenv("PATH")})
+		if (decision == "DENY" && code != 1) || (decision == "UNSURE" && code != 2) || strings.TrimSpace(out) != "specific reason" {
+			t.Fatal(code, out)
+		}
+	}
+}
+
+func TestApprovalContextAndModelEnvironment(t *testing.T) {
+	t.Setenv("PLY_PLAN_MODE", "1")
+	t.Setenv("PLY_COMMAND", "find /")
+	t.Setenv("PLY_COMMAND_TRUNCATED", "1")
+	t.Setenv("PLY_MODEL", "main")
+	t.Setenv("PLY_APPROVE_MODEL", "reviewer")
+	t.Setenv("PLY_CONTEXT_WINDOW", "100")
+	t.Setenv("PLY_APPROVE_CONTEXT_WINDOW", "200")
+	prompt := approvalPrompt()
+	for _, want := range []string{"Requested shell command:", "plan mode; inspection only", "command was truncated", "untrusted data"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatal(prompt)
+		}
+	}
+	if strings.Contains(prompt, "PLY_PLAN_MODE") {
+		t.Fatal("raw variable names in model context")
+	}
+	env := strings.Join(approvalEnvironment(), "\n") + "\n"
+	if !strings.Contains(env, "PLY_MODEL=reviewer\n") || strings.Contains(env, "PLY_MODEL=main\n") || !strings.Contains(env, "PLY_CONTEXT_WINDOW=200") {
+		t.Fatal("model overrides missing")
 	}
 }
 

@@ -16,7 +16,16 @@ type Config struct {
 	Project string
 }
 
-var defaults = map[string]any{"model": "", "base_url": "https://api.openai.com/v1", "context_window": 0, "compact_at": 0.8, "detach": false, "pager": true, "system_file": "", "provider.retries": 5, "approve.command": "ply-approve-chain ply-approve-allowlist ply-approve-ask", "bash.shell": "/bin/bash", "bash.default_timeout": 120, "output.max_lines": 200, "output.color": "auto", "output.show_thinking": false}
+var defaults = map[string]any{
+	"model": "", "api_key": "", "base_url": "https://api.openai.com/v1",
+	"context_window": 0, "compact_at": 0.8,
+	"detach": false, "pager": true, "system_file": "",
+	"provider.retries": 5,
+	"approve.command":  "ply-approve-chain ply-approve-allowlist ply-approve-ask",
+	"approve.model":    "", "approve.context_window": 0,
+	"bash.shell": "/bin/bash", "bash.default_timeout": 120,
+	"output.max_lines": 200, "output.color": "auto", "output.show_thinking": false,
+}
 
 func (c Config) S(k string) string { return str(c.Values[k]) }
 func (c Config) N(k string) int    { return num(c.Values[k]) }
@@ -87,7 +96,7 @@ func loadTOML(path string) (map[string]any, error) {
 	return r, nil
 }
 func sensitive(k string) bool {
-	return k == "model" || k == "base_url" || k == "bash.shell" || strings.HasPrefix(k, "provider.") || strings.HasPrefix(k, "approve.")
+	return k == "api_key" || k == "model" || k == "base_url" || k == "bash.shell" || strings.HasPrefix(k, "provider.") || strings.HasPrefix(k, "approve.")
 }
 func resolve(cwd string, o Options) (Config, error) {
 	c := Config{Values: map[string]any{}, Sources: map[string]string{}, Project: projectDir(cwd)}
@@ -189,8 +198,8 @@ func resolve(cwd string, o Options) (Config, error) {
 			}
 		}
 	}
-	if c.N("provider.retries") < 0 || c.N("bash.default_timeout") <= 0 || c.N("output.max_lines") < 2 || c.N("context_window") < 0 {
-		return c, fmt.Errorf("invalid retries, timeout, output.max_lines, or context_window")
+	if c.N("provider.retries") < 0 || c.N("bash.default_timeout") <= 0 || c.N("output.max_lines") < 2 || c.N("approve.context_window") < 0 || c.N("context_window") < 0 {
+		return c, fmt.Errorf("invalid retries, timeout, output limits, or context window")
 	}
 	f := c.Values["compact_at"]
 	fv, _ := strconv.ParseFloat(fmt.Sprint(f), 64)
@@ -223,4 +232,15 @@ func (c Config) require() error {
 		}
 	}
 	return nil
+}
+
+// snapshot contains only non-secret configuration.
+func (c Config) snapshot() map[string]any {
+	out := map[string]any{}
+	for k, v := range c.Values {
+		if k != "api_key" {
+			out[k] = v
+		}
+	}
+	return out
 }

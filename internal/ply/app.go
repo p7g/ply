@@ -121,7 +121,11 @@ func run(ctx context.Context, o Options) error {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Printf("%-24s %-40v %s\n", k, c.Values[k], c.Sources[k])
+			value := c.Values[k]
+			if k == "api_key" {
+				value = "[redacted]"
+			}
+			fmt.Printf("%-24s %-40v %s\n", k, value, c.Sources[k])
 		}
 		return nil
 	}
@@ -199,10 +203,10 @@ func run(ctx context.Context, o Options) error {
 		return err
 	}
 	last := latest(t.Items, "ply.config")
-	b, _ := json.Marshal(c.Values)
+	b, _ := json.Marshal(c.snapshot())
 	old, _ := json.Marshal(last["values"])
 	if !reflect.DeepEqual(b, old) {
-		if e = t.Append(Item{"type": "ply.config", "values": c.Values}); e != nil {
+		if e = t.Append(Item{"type": "ply.config", "values": c.snapshot()}); e != nil {
 			return e
 		}
 	}

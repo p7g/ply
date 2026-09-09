@@ -58,7 +58,7 @@ func (a *App) approve(call Item, args BashArgs, depth int) (bool, string, error)
 		approver = "parent bridge"
 		id := fmt.Sprintf("a%d", a.ApprovalID)
 		a.ApprovalID++
-		event(Item{"event": "approval_request", "id": id, "command": args.Command, "justification": args.Justification, "background": args.Background, "timeout_s": args.Timeout, "depth": depth})
+		event(Item{"event": "approval_request", "id": id, "command": args.Command, "justification": args.Justification, "background": args.Background, "timeout_s": args.Timeout, "depth": depth, "plan_mode": a.Options.Plan})
 	waiting:
 		for {
 			select {
@@ -99,7 +99,24 @@ func (a *App) approve(call Item, args BashArgs, depth int) (bool, string, error)
 				break
 			}
 		}
-		env := map[string]string{"PLY_COMMAND": command, "PLY_COMMAND_TRUNCATED": truncated, "PLY_JUSTIFICATION": args.Justification, "PLY_USER_MSG": user, "PLY_CWD": a.Cwd, "PLY_TRANSCRIPT": a.Path, "PLY_BACKGROUND": strconv.Itoa(btoi(args.Background)), "PLY_TIMEOUT": strconv.Itoa(args.Timeout), "PLY_APPROVAL_DEPTH": strconv.Itoa(depth), "PLY_CONFIG_DIR": a.Config.Project}
+		env := map[string]string{"PLY_COMMAND": command,
+			"PLY_COMMAND_TRUNCATED":      truncated,
+			"PLY_JUSTIFICATION":          args.Justification,
+			"PLY_USER_MSG":               user,
+			"PLY_CWD":                    a.Cwd,
+			"PLY_TRANSCRIPT":             a.Path,
+			"PLY_BACKGROUND":             strconv.Itoa(btoi(args.Background)),
+			"PLY_TIMEOUT":                strconv.Itoa(args.Timeout),
+			"PLY_APPROVAL_DEPTH":         strconv.Itoa(depth),
+			"PLY_CONFIG_DIR":             a.Config.Project,
+			"PLY_PLAN_MODE":              strconv.Itoa(btoi(a.Options.Plan)),
+			"PLY_API_KEY":                a.Config.S("api_key"),
+			"PLY_BASE_URL":               a.Config.S("base_url"),
+			"PLY_MODEL":                  a.Config.S("model"),
+			"PLY_CONTEXT_WINDOW":         strconv.Itoa(a.Config.N("context_window")),
+			"PLY_APPROVE_MODEL":          a.Config.S("approve.model"),
+			"PLY_APPROVE_CONTEXT_WINDOW": strconv.Itoa(a.Config.N("approve.context_window")),
+			"PLY_PROVIDER_RETRIES":       strconv.Itoa(a.Config.N("provider.retries"))}
 		cmd := exec.CommandContext(a.Context, "/bin/sh", "-c", approver)
 		cmd.Dir = a.Cwd
 		// Interactive approvers must remain in the terminal's foreground group.
@@ -109,6 +126,7 @@ func (a *App) approve(call Item, args BashArgs, depth int) (bool, string, error)
 		cmd.Env = replaceEnv(os.Environ(), env)
 		cmd.Stderr = os.Stderr
 		b, e := cmd.Output()
+
 		ok = e == nil
 		reason = strings.TrimSpace(string(b))
 		if e != nil && reason == "" {
@@ -147,7 +165,10 @@ func btoi(b bool) int {
 func (a *App) proxy(p proxyRequest) error {
 	args := BashArgs{Command: str(p.Event["command"]), Justification: str(p.Event["justification"]), Timeout: num(p.Event["timeout_s"])}
 	args.Background, _ = p.Event["background"].(bool)
+	originPlan := a.Options.Plan
+	a.Options.Plan = originPlan || p.Event["plan_mode"] == true
 	ok, reason, e := a.approve(Item{"seq": p.For}, args, max(0, num(p.Event["depth"]))+1)
+	a.Options.Plan = originPlan
 	if e != nil {
 		return e
 	}
@@ -200,7 +221,6 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 		case s := <-deltas:
 			printDelta(s)
 		case p := <-a.Proxy:
-			a.Status.Clear()
 			if e := a.proxy(p); e != nil {
 				cancel()
 				<-ch
@@ -222,7 +242,6 @@ func (a *App) call(input []Item, tools bool, stream bool) (Response, error) {
 			for len(deltas) > 0 {
 				printDelta(<-deltas)
 			}
-			a.Status.Clear()
 			prose.End()
 			a.Streamed = prose.Started
 			if res.e != nil && ctx.Err() != nil {

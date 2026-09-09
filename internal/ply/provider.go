@@ -132,7 +132,7 @@ func (p *Provider) request(ctx context.Context, b []byte, delta func(string)) (R
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+	if key := p.Config.S("api_key"); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, e := p.Client.Do(req)
